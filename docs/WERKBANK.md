@@ -2,7 +2,7 @@
 
 Kleine Weboberfläche zum Prüfen vieler Belege: Dateien oder ganze Ordner wählen bzw. hineinziehen,
 Ergebnis je Beleg mit Ampel, Details per Klick, Abgleich mit gedruckten Werten, Export als CSV.
-Hochgeladene Dateien werden nicht gespeichert.
+Hochgeladene Dateien werden nicht gespeichert. Gespeichert wird nur das Kassen-Gedächtnis (Kassen-ID, Lokal, Belegnummer, Zeit, Betrag) aus grünen oder bestätigten Belegen. Leeren: `php artisan beleg:gedaechtnis-leeren`.
 
 Erreichbar nur über SSH-Tunnel (läuft auf 127.0.0.1:8095 am Server, nicht öffentlich).
 

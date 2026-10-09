@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Fiskal\BelegTextAuswertung;
 use App\Fiskal\GedruckteWerte;
+use App\Fiskal\KassenGedaechtnis;
 use App\Forensik\ForensikPruefer;
 use App\Pruefung\BelegPruefService;
 use Illuminate\Http\JsonResponse;
@@ -48,6 +50,9 @@ class PruefController extends Controller
             'datum_uhrzeit' => ['nullable', 'string', 'max:20'],
             'kassen_id' => ['nullable', 'string', 'max:100'],
             'forensik' => ['nullable', 'array'],
+            'uid' => ['nullable', 'string', 'max:20'],
+            'aussteller' => ['nullable', 'string', 'max:200'],
+            'datei_sha256' => ['nullable', 'string', 'size:64'],
         ]);
 
         $gedruckt = new GedruckteWerte(
@@ -60,8 +65,24 @@ class PruefController extends Controller
         $zusatz = isset($daten['forensik'])
             ? (new ForensikPruefer)->pruefe($daten['forensik'], $gedruckt->datumUhrzeit)
             : [];
+        if ($rksv = BelegTextAuswertung::rksvAusQr($daten['qr_text'] ?? null)) {
+            $zusatz = [...$zusatz, ...(new KassenGedaechtnis)->pruefe($rksv, $daten['uid'] ?? null, $daten['aussteller'] ?? null, $daten['datei_sha256'] ?? null)];
+        }
 
         return response()->json($service->pruefeQr($daten['qr_text'] ?? null, $gedruckt, $zusatz));
+    }
+
+    /** Prüfer bestätigt den Beleg als in Ordnung → Kassen-Gedächtnis. */
+    public function bestaetigen(Request $request, BelegPruefService $service): JsonResponse
+    {
+        $d = $request->validate([
+            'qr_text' => ['required', 'string', 'max:2000'],
+            'uid' => ['nullable', 'string', 'max:20'],
+            'aussteller' => ['nullable', 'string', 'max:200'],
+            'datei_sha256' => ['nullable', 'string', 'size:64'],
+        ]);
+
+        return response()->json(['im_gedaechtnis' => $service->bestaetige($d['qr_text'], $d['uid'] ?? null, $d['aussteller'] ?? null, $d['datei_sha256'] ?? null)]);
     }
 
     /** "92,60" / "92.60" / "1.092,60" → Cent */

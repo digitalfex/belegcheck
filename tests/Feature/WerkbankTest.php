@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Belegleser\BelegleserClient;
 use App\Pruefung\BelegPruefService;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\RksvTestBeleg;
@@ -12,6 +13,8 @@ use Tests\TestCase;
 
 class WerkbankTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_werkbank_seite_laedt(): void
     {
         $this->get('/')->assertOk()->assertSee('Ordner wählen');

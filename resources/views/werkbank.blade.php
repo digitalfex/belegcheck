@@ -35,6 +35,10 @@
 
   table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th[data-sort] { cursor: pointer; user-select: none; }
+  th[data-sort]:hover { color: var(--ink); }
+  th[data-richtung=auf]::after { content: ' ▲'; font-size: 9px; }
+  th[data-richtung=ab]::after { content: ' ▼'; font-size: 9px; }
   th { font-size: 12px; font-weight: 600; color: var(--muted); background: #faf9f6; white-space: nowrap; }
   tr.beleg { cursor: pointer; }
   tr.beleg:hover td { background: #fbfaf8; }
@@ -70,6 +74,7 @@
   .original { position: sticky; top: 12px; }
   .original img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: zoom-in; display: block; margin-bottom: 8px; }
   .original img.gross { position: fixed; inset: 3vh auto auto 50%; transform: translateX(-50%); width: auto; max-width: 92vw; max-height: 94vh; z-index: 10; box-shadow: 0 0 0 100vmax rgba(0,0,0,.55); cursor: zoom-out; }
+  .gemerkt { color: var(--gruen); font-size: 13px; align-self: center; }
   .meta { font-size: 12px; color: var(--muted); }
   @media (max-width: 900px) { .detailgitter { grid-template-columns: 1fr; } .original { position: static; } }
   footer { color: var(--muted); font-size: 12px; margin-top: 16px; }
@@ -77,7 +82,7 @@
 </head>
 <body>
 <header>
-  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · Sprint 2 (Texterkennung) · nichts wird gespeichert</span>
+  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · Sprint 2 · Bilder werden nicht gespeichert, nur Kassendaten grüner/bestätigter Belege</span>
 </header>
 <main>
   <div class="drop" id="drop">
@@ -101,11 +106,15 @@
 
   <table>
     <thead>
-      <tr><th>Datei</th><th>Ampel</th><th>Aussteller</th><th>Datum/Uhrzeit</th><th>Kassen-ID</th><th>Belegnummer</th><th class="num">Summe QR</th><th class="num">Gedruckt</th><th>Hinweis</th></tr>
+      <tr id="kopf">
+        <th data-sort="datei">Datei</th><th data-sort="ampel">Ampel</th><th data-sort="aussteller">Aussteller</th>
+        <th data-sort="datum">Datum/Uhrzeit</th><th data-sort="kasse">Kassen-ID</th><th data-sort="belegnr">Belegnummer</th>
+        <th data-sort="summe" class="num">Summe QR</th><th data-sort="gedruckt" class="num">Gedruckt</th><th data-sort="hinweis">Hinweis</th>
+      </tr>
     </thead>
     <tbody id="liste"><tr><td colspan="9" class="leer">Noch keine Belege geprüft.</td></tr></tbody>
   </table>
-  <footer>Zeile anklicken für Details mit dem Original (Bild anklicken vergrößert). Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
+  <footer>Spaltenkopf anklicken zum Sortieren (Ampel: Rot zuerst). Zeile anklicken für Details mit dem Original (Bild anklicken vergrößert). Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
 </main>
 
 <script>
@@ -192,7 +201,7 @@ async function nachpruefen(b) {
   const r = await fetch('/nachpruefen', {
     method: 'POST',
     headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ qr_text: b.daten.qr_text, forensik: b.daten.forensik, ...b.gedruckt }),
+    body: JSON.stringify({ qr_text: b.daten.qr_text, forensik: b.daten.forensik, uid: b.daten.uid, aussteller: b.daten.aussteller, datei_sha256: b.daten.datei_sha256, ...b.gedruckt }),
   });
   const j = await r.json();
   if (r.ok) { b.daten = { ...b.daten, ...j }; zeichnen(); }
@@ -225,13 +234,47 @@ function dubletten() {
 // ---------- Anzeige ----------
 let offen = null;
 
+// ---------- Sortierung ----------
+let sortSpalte = null, sortRichtung = 1;
+// Ampel: rot zuerst (bei absteigend), dann nach Risikowert
+const AMPEL_RANG = b => b.status === 'fehler' ? 5 : !b.daten ? -2 : !b.daten.qr ? 0 : ({ gruen: 1, gelb: 2, rot: 3 }[b.daten.ampel] ?? 0);
+const SORT_WERT = {
+  datei: b => b.name.toLowerCase(),
+  ampel: b => AMPEL_RANG(b) * 1000 + (b.daten?.risikowert ?? 0),
+  aussteller: b => (b.daten?.aussteller ?? '').toLowerCase(),
+  datum: b => b.daten?.qr?.datum_uhrzeit?.replace('T', ' ') ?? b.daten?.gedruckt?.datum_uhrzeit ?? '',
+  kasse: b => b.daten?.qr?.kassen_id ?? '',
+  belegnr: b => b.daten?.qr?.belegnummer ?? '',
+  summe: b => b.daten?.qr?.summe_cent ?? -1,
+  gedruckt: b => b.daten?.gedruckt?.gesamt_cent ?? -1,
+  hinweis: (b, dub) => (dub[b.id] ? 'zz' : '') + (b.daten?.ergebnisse ?? []).filter(e => !['ok', 'nicht_pruefbar'].includes(e.stufe)).length,
+};
+
+function sortiert(dub) {
+  if (!sortSpalte) return belege;
+  const f = SORT_WERT[sortSpalte];
+  return [...belege].sort((a, b) => {
+    const x = f(a, dub), y = f(b, dub);
+    return (x < y ? -1 : x > y ? 1 : a.id - b.id) * sortRichtung;
+  });
+}
+
+document.querySelectorAll('#kopf th[data-sort]').forEach(th => th.onclick = () => {
+  const spalte = th.dataset.sort;
+  if (sortSpalte === spalte) sortRichtung = -sortRichtung;
+  else { sortSpalte = spalte; sortRichtung = ['ampel', 'summe', 'gedruckt', 'hinweis'].includes(spalte) ? -1 : 1; }
+  document.querySelectorAll('#kopf th').forEach(t => t.dataset.richtung = '');
+  th.dataset.richtung = sortRichtung === 1 ? 'auf' : 'ab';
+  zeichnen();
+});
+
 function zeichnen() {
   const tb = $('liste');
   if (!belege.length) {
     tb.innerHTML = '<tr><td colspan="9" class="leer">Noch keine Belege geprüft.</td></tr>';
   } else {
     const dub = dubletten();
-    tb.innerHTML = belege.map(b => zeile(b, dub[b.id]) + (offen === b.id && b.daten ? detail(b) : '')).join('');
+    tb.innerHTML = sortiert(dub).map(b => zeile(b, dub[b.id]) + (offen === b.id && b.daten ? detail(b) : '')).join('');
   }
 
   const fertig = belege.filter(b => b.daten);
@@ -307,6 +350,7 @@ function detail(b) {
       <label>Gedrucktes Datum/Uhrzeit<input id="g_datum" placeholder="05.10.2026 22:37" value="${esc(g.datum_uhrzeit ?? '')}"></label>
       <label>Gedruckte Kassen-ID<input id="g_kasse" placeholder="Pos10918" value="${esc(g.kassen_id ?? '')}"></label>
       <button class="primary" onclick="gedrucktPruefen(${b.id})">Mit Gedrucktem vergleichen</button>
+      ${d.im_gedaechtnis ? '<span class="gemerkt">✓ im Kassen-Gedächtnis</span>' : `<button onclick="bestaetigen(${b.id})" title="Beleg ist in Ordnung – Kasse und Belegnummer ins Gedächtnis übernehmen">Als in Ordnung bestätigen</button>`}
     </div>
     <div class="qrroh mono">QR-Inhalt: ${esc(d.qr_text)}</div>` : '';
   const bilder = (d.vorschau || []).map((v, i) =>
@@ -324,6 +368,16 @@ window.gedrucktPruefen = id => {
   const b = belege[id];
   b.gedruckt = { gesamt: $('g_gesamt').value.trim(), datum_uhrzeit: $('g_datum').value.trim(), kassen_id: $('g_kasse').value.trim() };
   nachpruefen(b);
+};
+
+window.bestaetigen = async id => {
+  const b = belege[id], d = b.daten;
+  const r = await fetch('/bestaetigen', {
+    method: 'POST',
+    headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ qr_text: d.qr_text, uid: d.uid, aussteller: d.aussteller, datei_sha256: d.datei_sha256 }),
+  });
+  if (r.ok) { d.im_gedaechtnis = (await r.json()).im_gedaechtnis; zeichnen(); }
 };
 
 $('btnLeeren').onclick = () => { belege.length = 0; offen = null; zeichnen(); };

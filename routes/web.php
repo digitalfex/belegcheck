@@ -7,3 +7,4 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', [PruefController::class, 'index']);
 Route::post('/pruefen', [PruefController::class, 'datei']);
 Route::post('/nachpruefen', [PruefController::class, 'nachpruefen']);
+Route::post('/bestaetigen', [PruefController::class, 'bestaetigen']);

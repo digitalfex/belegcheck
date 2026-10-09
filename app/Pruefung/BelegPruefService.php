@@ -5,6 +5,7 @@ namespace App\Pruefung;
 use App\Belegleser\BelegleserClient;
 use App\Fiskal\BelegTextAuswertung;
 use App\Fiskal\GedruckteWerte;
+use App\Fiskal\KassenGedaechtnis;
 use App\Fiskal\Rksv\RksvParser;
 use App\Fiskal\Rksv\RksvPruefer;
 use App\Forensik\ForensikPruefer;
@@ -18,6 +19,7 @@ final class BelegPruefService
     public function __construct(
         private readonly ?BelegleserClient $leser = null,
         private readonly RksvPruefer $rksv = new RksvPruefer,
+        private readonly KassenGedaechtnis $gedaechtnis = new KassenGedaechtnis,
     ) {}
 
     /**
@@ -37,7 +39,7 @@ final class BelegPruefService
         $uid = $text->uid();
         $datum = $gedruckt->datumUhrzeit ?? ($rksv ? str_replace('T', ' ', $rksv->datumUhrzeit) : null);
 
-        return [
+        $bericht = [
             'datei_sha256' => BelegFingerabdruck::datei($pfad),
             'gefundene_codes' => $codes,
             'text' => $text->text(),
@@ -63,10 +65,36 @@ final class BelegPruefService
             'text_hash' => BelegFingerabdruck::text($text->text()),
             'forensik' => $gelesen['forensik'] ?? null,
             'vorschau' => $gelesen['vorschau'] ?? [],
-            ...$this->pruefeQr($qr, $gedruckt, isset($gelesen['forensik'])
-                ? (new ForensikPruefer)->pruefe($gelesen['forensik'], $datum)
-                : []),
         ];
+
+        $dateiSha = BelegFingerabdruck::datei($pfad);
+        $zusatz = [
+            ...(isset($gelesen['forensik']) ? (new ForensikPruefer)->pruefe($gelesen['forensik'], $datum) : []),
+            ...($rksv ? $this->gedaechtnis->pruefe($rksv, $uid, $text->aussteller(), $dateiSha) : []),
+        ];
+
+        $ergebnis = $this->pruefeQr($qr, $gedruckt, $zusatz);
+
+        // Gedächtnis lernt automatisch nur aus grünen Belegen; gelbe/rote erst nach Bestätigung durch den Prüfer
+        $ergebnis['im_gedaechtnis'] = false;
+        if ($rksv && $ergebnis['ampel'] === 'gruen') {
+            $this->gedaechtnis->merke($rksv, $uid, $text->aussteller(), $dateiSha);
+            $ergebnis['im_gedaechtnis'] = true;
+        }
+
+        return [...$bericht, ...$ergebnis];
+    }
+
+    /** Prüfer bestätigt einen gelben/roten Beleg als in Ordnung → ins Kassen-Gedächtnis. */
+    public function bestaetige(string $qr, ?string $uid, ?string $aussteller, ?string $dateiSha): bool
+    {
+        $rksv = BelegTextAuswertung::rksvAusQr($qr);
+        if (! $rksv) {
+            return false;
+        }
+        $this->gedaechtnis->merke($rksv, $uid, $aussteller, $dateiSha);
+
+        return true;
     }
 
     /** Prüft einen bereits gelesenen QR-Inhalt (oder null, wenn keiner gefunden wurde). */
