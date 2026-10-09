@@ -70,12 +70,12 @@ BEARBEITUNGS_SOFTWARE = ("photoshop", "gimp", "affinity", "pixelmator", "canva",
                          "picsart", "fotor", "photopea", "illustrator", "inkscape", "krita")
 
 
-def vorschau(bild: Image.Image, max_hoehe: int = 1600) -> str:
+def vorschau(bild: Image.Image, max_hoehe: int = 4000) -> str:
     """Originalansicht für die Werkbank (JPEG, base64) – funktioniert auch für HEIC und PDF."""
     import base64
 
     kopie = bild.convert("RGB")
-    kopie.thumbnail((1000, max_hoehe))
+    kopie.thumbnail((1400, max_hoehe))  # lange Bons nicht stauchen: Breite bestimmt die Lesbarkeit
     puffer = io.BytesIO()
     kopie.save(puffer, format="JPEG", quality=82)
     return base64.b64encode(puffer.getvalue()).decode()

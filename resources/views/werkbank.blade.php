@@ -73,7 +73,12 @@
   .detailgitter { display: grid; grid-template-columns: 340px 1fr; gap: 22px; align-items: start; }
   .original { position: sticky; top: 12px; }
   .original img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: zoom-in; display: block; margin-bottom: 8px; }
-  .original img.gross { position: fixed; inset: 3vh auto auto 50%; transform: translateX(-50%); width: auto; max-width: 92vw; max-height: 94vh; z-index: 10; box-shadow: 0 0 0 100vmax rgba(0,0,0,.55); cursor: zoom-out; }
+  #lupe { position: fixed; inset: 0; background: rgba(20,20,18,.82); z-index: 20; overflow: auto; display: none; padding: 24px 0 60px; }
+  #lupe.offen { display: block; }
+  #lupe img { display: block; margin: 0 auto; width: min(760px, 94vw); background: #fff; border-radius: 4px; cursor: zoom-in; }
+  #lupe img.breit { width: min(1400px, 98vw); cursor: zoom-out; }
+  #lupe .zu { position: fixed; top: 14px; right: 20px; background: #fff; border: 0; border-radius: 999px; width: 36px; height: 36px; font-size: 18px; }
+  #lupe .tipp { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); color: #fff; background: rgba(0,0,0,.7); padding: 4px 12px; border-radius: 999px; font-size: 12px; }
   .gemerkt { color: var(--gruen); font-size: 13px; align-self: center; }
   .meta { font-size: 12px; color: var(--muted); }
   @media (max-width: 900px) { .detailgitter { grid-template-columns: 1fr; } .original { position: static; } }
@@ -117,7 +122,16 @@
   <footer>Spaltenkopf anklicken zum Sortieren (Ampel: Rot zuerst). Zeile anklicken für Details mit dem Original (Bild anklicken vergrößert). Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
 </main>
 
+<div id="lupe" onclick="if (event.target === this) lupeZu()">
+  <button class="zu" onclick="lupeZu()" title="Schließen (Esc)">✕</button>
+  <img id="lupeBild" alt="Original" onclick="this.classList.toggle('breit')">
+  <div class="tipp">Scrollen für den ganzen Beleg · Bild anklicken für noch größer · Esc schließt</div>
+</div>
+
 <script>
+function lupe(src) { const b = document.getElementById('lupeBild'); b.src = src; b.classList.remove('breit'); const l = document.getElementById('lupe'); l.classList.add('offen'); l.scrollTop = 0; document.body.style.overflow = 'hidden'; }
+function lupeZu() { document.getElementById('lupe').classList.remove('offen'); document.body.style.overflow = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') lupeZu(); });
 const CSRF = document.querySelector('meta[name=csrf-token]').content;
 const ERLAUBT = /\.(jpe?g|png|heic|heif|webp|pdf)$/i;
 const PARALLEL = 2;
@@ -354,7 +368,7 @@ function detail(b) {
     </div>
     <div class="qrroh mono">QR-Inhalt: ${esc(d.qr_text)}</div>` : '';
   const bilder = (d.vorschau || []).map((v, i) =>
-    `<img src="data:image/jpeg;base64,${v}" alt="Seite ${i + 1}" onclick="event.stopPropagation(); this.classList.toggle('gross')" title="Klicken zum Vergrößern">`).join('');
+    `<img src="data:image/jpeg;base64,${v}" alt="Seite ${i + 1}" onclick="event.stopPropagation(); lupe(this.src)" title="Klicken zum Vergrößern">`).join('');
   const f = d.forensik?.metadaten || {};
   const meta = d.forensik ? `<div class="meta">Datei: ${esc([f.hersteller, f.modell].filter(Boolean).join(' ') || 'keine Kameraangaben')}${f.software ? ' · Software: ' + esc(f.software) : ''}${f.aufnahme ? ' · Aufnahme: ' + esc(f.aufnahme) : ''}</div>` : '';
   return `<tr class="detail"><td colspan="9"><div class="detailgitter">
