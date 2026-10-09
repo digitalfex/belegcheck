@@ -40,6 +40,7 @@
   tr.beleg:hover td { background: #fbfaf8; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.datei { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.mono { white-space: nowrap; }
   .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
 
   .ampel { display: inline-block; min-width: 64px; text-align: center; padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 12px; }
@@ -60,12 +61,17 @@
   .qrroh { margin-top: 10px; word-break: break-all; color: var(--muted); }
   .leer { color: var(--muted); text-align: center; padding: 28px; }
   .fehler { color: var(--rot); }
+  .quelle { font-size: 10.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+  .quelle.unsicher { color: var(--gelb); border-color: var(--gelb); }
+  details.text { margin-top: 12px; }
+  details.text summary { cursor: pointer; color: var(--muted); }
+  details.text pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; max-height: 320px; overflow: auto; font-size: 12px; }
   footer { color: var(--muted); font-size: 12px; margin-top: 16px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · nichts wird gespeichert</span>
+  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · Sprint 2 (Texterkennung) · nichts wird gespeichert</span>
 </header>
 <main>
   <div class="drop" id="drop">
@@ -89,9 +95,9 @@
 
   <table>
     <thead>
-      <tr><th>Datei</th><th>Ampel</th><th>Datum/Uhrzeit</th><th>Kassen-ID</th><th>Belegnummer</th><th class="num">Summe QR</th><th class="num">Gedruckt</th><th>Hinweis</th></tr>
+      <tr><th>Datei</th><th>Ampel</th><th>Aussteller</th><th>Datum/Uhrzeit</th><th>Kassen-ID</th><th>Belegnummer</th><th class="num">Summe QR</th><th class="num">Gedruckt</th><th>Hinweis</th></tr>
     </thead>
-    <tbody id="liste"><tr><td colspan="8" class="leer">Noch keine Belege geprüft.</td></tr></tbody>
+    <tbody id="liste"><tr><td colspan="9" class="leer">Noch keine Belege geprüft.</td></tr></tbody>
   </table>
   <footer>Zeile anklicken für Details. Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
 </main>
@@ -199,6 +205,14 @@ function dubletten() {
     for (const b of gruppe) hinweise[b.id] = 'Gleiche Datei wie ' + gruppe.filter(x => x !== b).map(x => x.name).join(', ');
   for (const gruppe of Object.values(nachFiskal)) if (gruppe.length > 1)
     for (const b of gruppe) hinweise[b.id] ??= 'Gleicher Kassenbeleg wie ' + gruppe.filter(x => x !== b).map(x => x.name).join(', ');
+  const nachInhalt = {};
+  for (const b of belege) if (b.daten?.inhalt_hash) (nachInhalt[b.daten.inhalt_hash] ??= []).push(b);
+  for (const gruppe of Object.values(nachInhalt)) if (gruppe.length > 1)
+    for (const b of gruppe) hinweise[b.id] ??= 'Gleiche Rechnung (Inhalt) wie ' + gruppe.filter(x => x !== b).map(x => x.name).join(', ');
+  const mitText = belege.filter(b => b.daten?.text_hash);
+  for (const a of mitText) for (const c of mitText)
+    if (a !== c && bitAbstand(a.daten.text_hash, c.daten.text_hash) <= 6)
+      hinweise[a.id] ??= 'Sehr ähnlicher Text wie ' + c.name + ' (zweites Foto?)';
   return hinweise;
 }
 
@@ -208,7 +222,7 @@ let offen = null;
 function zeichnen() {
   const tb = $('liste');
   if (!belege.length) {
-    tb.innerHTML = '<tr><td colspan="8" class="leer">Noch keine Belege geprüft.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="9" class="leer">Noch keine Belege geprüft.</td></tr>';
   } else {
     const dub = dubletten();
     tb.innerHTML = belege.map(b => zeile(b, dub[b.id]) + (offen === b.id && b.daten ? detail(b) : '')).join('');
@@ -242,13 +256,28 @@ function zeile(b, dublette) {
   return `<tr class="beleg" onclick="umschalten(${b.id})">
     <td class="datei" title="${esc(b.name)}">${esc(b.name)}</td>
     <td>${ampel}</td>
-    <td class="mono">${esc(q?.datum_uhrzeit?.replace('T', ' '))}</td>
+    <td class="datei" title="${esc(d?.aussteller)}">${esc(d?.aussteller)}</td>
+    <td class="mono">${esc(q?.datum_uhrzeit?.replace('T', ' ') ?? d?.gedruckt?.datum_uhrzeit)}</td>
     <td class="mono">${esc(q?.kassen_id)}</td>
     <td class="mono">${esc(q?.belegnummer)}</td>
     <td class="num">${eur(q?.summe_cent)}</td>
-    <td class="num">${esc(b.gedruckt.gesamt ?? '')}</td>
+    <td class="num">${gedrucktZelle(b)}</td>
     <td>${hinweis}</td>
   </tr>`;
+}
+
+function gedrucktZelle(b) {
+  if (b.gedruckt.gesamt) return esc(b.gedruckt.gesamt) + ' <span class="quelle">Hand</span>';
+  const g = b.daten?.gedruckt;
+  if (g?.gesamt_cent == null) return '';
+  const unsicher = (g.lesesicherheit?.gesamt ?? 1) < 0.8;
+  return eur(g.gesamt_cent) + ` <span class="quelle${unsicher ? ' unsicher' : ''}">${b.daten.text_quelle === 'pdf-text' ? 'PDF' : 'OCR'}</span>`;
+}
+
+function bitAbstand(a, b) {
+  let x = BigInt('0x' + a) ^ BigInt('0x' + b), n = 0;
+  while (x) { n += Number(x & 1n); x >>= 1n; }
+  return n;
 }
 
 function detail(b) {
@@ -259,16 +288,22 @@ function detail(b) {
     <div class="mono">${esc(e.code)}</div>
     <div class="stufe-${e.stufe}">${esc(e.stufe.replace('_', ' '))}</div>
     <div>${esc(e.begruendung)}</div>`).join('');
-  const g = b.gedruckt;
+  const auto = d.gedruckt || {};
+  const g = {
+    gesamt: b.gedruckt.gesamt ?? (auto.gesamt_cent != null ? (auto.gesamt_cent / 100).toFixed(2).replace('.', ',') : ''),
+    datum_uhrzeit: b.gedruckt.datum_uhrzeit ?? (auto.datum_uhrzeit ? auto.datum_uhrzeit.replace(/^(\d{4})-(\d{2})-(\d{2})/, '$3.$2.$1') : ''),
+    kassen_id: b.gedruckt.kassen_id ?? auto.kassen_id ?? '',
+  };
+  const textBlock = d.text ? `<details class="text" onclick="event.stopPropagation()"><summary>Erkannter Text (${d.text_quelle === 'pdf-text' ? 'aus PDF' : 'Texterkennung, Sicherheit ' + Math.round((d.text_sicherheit ?? 0) * 100) + ' %'}${d.uid ? ', UID ' + esc(d.uid) : ''})</summary><pre>${esc(d.text)}</pre></details>` : '';
   const vergleich = d.qr ? `
     <div class="vergleich" onclick="event.stopPropagation()">
-      <label>Gedruckter Gesamtbetrag<input id="g_gesamt" placeholder="92,60" value="${esc(g.gesamt ?? '')}"></label>
+      <label>Gedruckter Gesamtbetrag (aus Text vorbefüllt)<input id="g_gesamt" placeholder="92,60" value="${esc(g.gesamt ?? '')}"></label>
       <label>Gedrucktes Datum/Uhrzeit<input id="g_datum" placeholder="05.10.2026 22:37" value="${esc(g.datum_uhrzeit ?? '')}"></label>
       <label>Gedruckte Kassen-ID<input id="g_kasse" placeholder="Pos10918" value="${esc(g.kassen_id ?? '')}"></label>
       <button class="primary" onclick="gedrucktPruefen(${b.id})">Mit Gedrucktem vergleichen</button>
     </div>
     <div class="qrroh mono">QR-Inhalt: ${esc(d.qr_text)}</div>` : '';
-  return `<tr class="detail"><td colspan="8"><div class="ergebnis">${ergebnisse}</div>${vergleich}</td></tr>`;
+  return `<tr class="detail"><td colspan="9"><div class="ergebnis">${ergebnisse}</div>${vergleich}${textBlock}</td></tr>`;
 }
 
 window.umschalten = id => { offen = offen === id ? null : id; zeichnen(); };
@@ -282,11 +317,11 @@ $('btnLeeren').onclick = () => { belege.length = 0; offen = null; zeichnen(); };
 
 // ---------- CSV (Testsatz) ----------
 $('btnCsv').onclick = () => {
-  const kopf = ['datei', 'ampel', 'risikowert', 'datum_uhrzeit', 'kassen_id', 'belegnummer', 'summe_qr', 'gedruckt_gesamt', 'auffaellig', 'qr_text'];
+  const kopf = ['datei', 'ampel', 'risikowert', 'aussteller', 'uid', 'datum_uhrzeit', 'kassen_id', 'belegnummer', 'summe_qr', 'gedruckt_gesamt', 'auffaellig', 'qr_text'];
   const zeilen = belege.filter(b => b.daten).map(b => {
     const d = b.daten, q = d.qr || {};
-    return [b.name, d.qr ? d.ampel : 'ohne_qr', d.risikowert, q.datum_uhrzeit, q.kassen_id, q.belegnummer,
-      q.summe_cent != null ? (q.summe_cent / 100).toFixed(2).replace('.', ',') : '', b.gedruckt.gesamt ?? '',
+    return [b.name, d.qr ? d.ampel : 'ohne_qr', d.risikowert, d.aussteller, d.uid, q.datum_uhrzeit ?? d.gedruckt?.datum_uhrzeit, q.kassen_id, q.belegnummer,
+      q.summe_cent != null ? (q.summe_cent / 100).toFixed(2).replace('.', ',') : '', b.gedruckt.gesamt ?? (d.gedruckt?.gesamt_cent != null ? (d.gedruckt.gesamt_cent / 100).toFixed(2).replace('.', ',') : ''),
       d.ergebnisse.filter(e => !['ok', 'nicht_pruefbar'].includes(e.stufe)).map(e => e.code).join(' '), d.qr_text ?? ''];
   });
   const csv = [kopf, ...zeilen].map(z => z.map(f => '"' + String(f ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n');

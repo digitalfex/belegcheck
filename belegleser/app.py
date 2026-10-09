@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 
+import pytesseract
 import zxingcpp
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from PIL import Image, ImageOps
@@ -39,6 +40,17 @@ def _bilder_aus_datei(daten: bytes, name: str) -> list[Image.Image]:
     return [ImageOps.exif_transpose(bild)]  # Handyfotos richtig drehen
 
 
+def pdf_textschicht(daten: bytes) -> list[str] | None:
+    """Digitale PDF-Belege (z. B. E-Mail-Rechnungen) haben eine Textschicht – die ist genauer als jede Texterkennung."""
+    if daten[:4] != b"%PDF":
+        return None
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(daten)
+    texte = [seite.get_textpage().get_text_range() for seite in pdf]
+    return texte if sum(len(t.strip()) for t in texte) > 30 else None
+
+
 def _varianten(bild: Image.Image):
     """Mehrere Aufbereitungen, weil Thermopapier oft blass oder verzogen ist."""
     grau = bild.convert("L")
@@ -61,6 +73,59 @@ def qr_codes_lesen(bild: Image.Image) -> list[dict]:
     return list(gefunden.values())
 
 
+def _schraeglage(grau: Image.Image) -> float:
+    """Schätzt die Schräglage (Grad) über das Zeilenprofil: bei richtigem Winkel sind die Zeilen am schärfsten."""
+    klein = grau.copy()
+    klein.thumbnail((600, 600))
+    sw = klein.point(lambda p: 255 if p < 128 else 0)  # Text weiß auf schwarz
+    bester, beste_schaerfe = 0.0, -1.0
+    for zehntel in range(-60, 61, 5):  # -6° … +6° in 0,5°-Schritten
+        gedreht = sw.rotate(zehntel / 10, resample=Image.NEAREST, fillcolor=0)
+        breite = gedreht.width
+        daten = gedreht.tobytes()
+        zeilen = [sum(daten[y * breite:(y + 1) * breite]) for y in range(gedreht.height)]
+        schaerfe = sum((zeilen[i + 1] - zeilen[i]) ** 2 for i in range(len(zeilen) - 1))
+        if schaerfe > beste_schaerfe:
+            bester, beste_schaerfe = zehntel / 10, schaerfe
+    return bester
+
+
+def _fuer_ocr(bild: Image.Image) -> Image.Image:
+    """Bon-Fotos für Tesseract aufbereiten: Graustufen, gerade drehen, auf ~1800 px Höhe bringen, Kontrast."""
+    grau = ImageOps.autocontrast(bild.convert("L"), cutoff=1)
+    winkel = _schraeglage(grau)
+    if abs(winkel) >= 0.5:
+        grau = grau.rotate(winkel, resample=Image.BICUBIC, expand=True, fillcolor=255)
+    if grau.height < 1800:
+        faktor = 1800 / grau.height
+        grau = grau.resize((int(grau.width * faktor), 1800), Image.LANCZOS)
+    return grau
+
+
+def text_lesen(bild: Image.Image) -> dict:
+    """Texterkennung mit Zeilen und Lesesicherheit (0..1) je Zeile."""
+    daten = pytesseract.image_to_data(
+        _fuer_ocr(bild), lang="deu+eng", config="--psm 4", output_type=pytesseract.Output.DICT
+    )
+    zeilen: dict[tuple, dict] = {}
+    for i, wort in enumerate(daten["text"]):
+        wort = wort.strip()
+        conf = float(daten["conf"][i])
+        if not wort or conf < 0:
+            continue
+        schluessel = (daten["block_num"][i], daten["par_num"][i], daten["line_num"][i])
+        z = zeilen.setdefault(schluessel, {"woerter": [], "conf": []})
+        z["woerter"].append(wort)
+        z["conf"].append(conf)
+
+    ergebnis = [
+        {"text": " ".join(z["woerter"]), "sicherheit": round(sum(z["conf"]) / len(z["conf"]) / 100, 2)}
+        for z in zeilen.values()
+    ]
+    gesamt = round(sum(z["sicherheit"] for z in ergebnis) / len(ergebnis), 2) if ergebnis else 0.0
+    return {"text": "\n".join(z["text"] for z in ergebnis), "zeilen": ergebnis, "sicherheit": gesamt}
+
+
 @app.get("/gesund")
 def gesund() -> dict:
     return {"status": "ok", "version": app.version}
@@ -81,3 +146,38 @@ async def qr(datei: UploadFile = File(...)) -> dict:
         for c in qr_codes_lesen(bild):
             codes.append({**c, "seite": seite})
     return {"codes": codes, "seiten": len(bilder)}
+
+
+@app.post("/lesen")
+async def lesen(datei: UploadFile = File(...)) -> dict:
+    """QR-Codes und Text in einem Durchgang (Sprint 2)."""
+    daten = await datei.read()
+    if len(daten) > MAX_BYTES:
+        raise HTTPException(413, "Datei größer als 20 MB")
+    try:
+        bilder = _bilder_aus_datei(daten, datei.filename or "")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, f"Datei nicht lesbar: {e}") from e
+
+    textschicht = pdf_textschicht(daten)
+
+    codes: list[dict] = []
+    seiten: list[dict] = []
+    for nr, bild in enumerate(bilder, start=1):
+        for c in qr_codes_lesen(bild):
+            codes.append({**c, "seite": nr})
+        if textschicht is not None:
+            zeilen = [z.strip() for z in textschicht[nr - 1].splitlines() if z.strip()]
+            seiten.append({"seite": nr, "text": "\n".join(zeilen),
+                           "zeilen": [{"text": z, "sicherheit": 1.0} for z in zeilen], "sicherheit": 1.0})
+        else:
+            seiten.append({"seite": nr, **text_lesen(bild)})
+
+    return {
+        "codes": codes,
+        "seiten": len(bilder),
+        "text": "\n".join(s["text"] for s in seiten),
+        "zeilen": [z for s in seiten for z in s["zeilen"]],
+        "sicherheit": round(sum(s["sicherheit"] for s in seiten) / len(seiten), 2) if seiten else 0.0,
+        "quelle": "pdf-text" if textschicht is not None else "ocr",
+    }

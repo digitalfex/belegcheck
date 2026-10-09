@@ -172,7 +172,7 @@ final class RksvPruefer
         if ($g->gesamtCent === null) {
             $out[] = new PruefErgebnis('AT-QR-04', Stufe::NichtPruefbar, 'Gesamtbetrag auf dem Beleg nicht gelesen.');
         } elseif ($g->gesamtCent !== $b->summeCent()) {
-            $out[] = $this->abweichung('AT-QR-04', $g->sicher('gesamt'),
+            $out[] = $this->abweichung('AT-QR-04', $g->sicher('gesamt'), Stufe::Auffaellig,
                 sprintf('Der Betrag im Kassen-QR-Code (%s) weicht vom gedruckten Gesamtbetrag (%s) ab.', self::eur($b->summeCent()), self::eur($g->gesamtCent)),
                 ['qr' => $b->summeCent(), 'gedruckt' => $g->gesamtCent]);
         } else {
@@ -226,11 +226,24 @@ final class RksvPruefer
         return $out;
     }
 
-    private function abweichung(string $code, bool $sicherGelesen, string $text, array $werte): PruefErgebnis
+    /**
+     * Abweichung QR ↔ gedruckt. Sicher gelesen → Widerspruch; unsicher gelesen → $stufeUnsicher
+     * (Standard Hinweis; beim Gesamtbetrag „auffällig“, weil eine echte Änderung ebenso nur eine Ziffer sein kann).
+     */
+    private function abweichung(string $code, bool $sicherGelesen, Stufe|string $stufeOderText, string|array $textOderWerte, array $werte = []): PruefErgebnis
     {
+        if ($stufeOderText instanceof Stufe) {
+            $stufeUnsicher = $stufeOderText;
+            $text = $textOderWerte;
+        } else {
+            $stufeUnsicher = Stufe::Hinweis;
+            $text = $stufeOderText;
+            $werte = $textOderWerte;
+        }
+
         return $sicherGelesen
             ? new PruefErgebnis($code, Stufe::Widerspruch, $text.' Original-Beleg anfordern oder Einreicher um Erklärung bitten.', $werte)
-            : new PruefErgebnis($code, Stufe::Hinweis, $text.' Der gedruckte Wert wurde unsicher gelesen; bitte am Bild prüfen.', $werte);
+            : new PruefErgebnis($code, $stufeUnsicher, $text.' Der gedruckte Wert ist eventuell falsch gelesen; bitte am Bild prüfen.', $werte);
     }
 
     private function normId(string $id): string

@@ -3,6 +3,7 @@
 namespace App\Pruefung;
 
 use App\Belegleser\BelegleserClient;
+use App\Fiskal\BelegTextAuswertung;
 use App\Fiskal\GedruckteWerte;
 use App\Fiskal\Rksv\RksvParser;
 use App\Fiskal\Rksv\RksvPruefer;
@@ -18,15 +19,47 @@ final class BelegPruefService
         private readonly RksvPruefer $rksv = new RksvPruefer,
     ) {}
 
-    /** Prüft eine Datei (Foto/PDF). */
+    /**
+     * Prüft eine Datei (Foto/PDF): QR-Code und Text lesen, gedruckte Werte automatisch ermitteln.
+     * Von Hand übergebene gedruckte Werte haben Vorrang vor der Texterkennung.
+     */
     public function pruefeDatei(string $pfad, ?GedruckteWerte $gedruckt = null): array
     {
-        $codes = ($this->leser ?? BelegleserClient::ausConfig())->qrCodes($pfad);
+        $gelesen = ($this->leser ?? BelegleserClient::ausConfig())->lesen($pfad);
+        $codes = $gelesen['codes'] ?? [];
         $qr = collect($codes)->first(fn ($c) => RksvParser::istRksv($c['text']))['text'] ?? null;
+
+        $text = new BelegTextAuswertung($gelesen['zeilen'] ?? []);
+        $rksv = BelegTextAuswertung::rksvAusQr($qr);
+        $gedruckt ??= $text->gedruckteWerte($rksv);
+
+        $uid = $text->uid();
+        $datum = $gedruckt->datumUhrzeit ?? ($rksv ? str_replace('T', ' ', $rksv->datumUhrzeit) : null);
 
         return [
             'datei_sha256' => BelegFingerabdruck::datei($pfad),
             'gefundene_codes' => $codes,
+            'text' => $text->text(),
+            'text_quelle' => $gelesen['quelle'] ?? 'ocr',
+            'text_sicherheit' => $gelesen['sicherheit'] ?? null,
+            'uid' => $uid,
+            'aussteller' => $text->aussteller(),
+            'gedruckt' => [
+                'gesamt_cent' => $gedruckt->gesamtCent,
+                'betraege_je_satz_cent' => $gedruckt->betraegeJeSatzCent,
+                'datum_uhrzeit' => $gedruckt->datumUhrzeit,
+                'kassen_id' => $gedruckt->kassenId,
+                'lesesicherheit' => $gedruckt->lesesicherheit,
+            ],
+            // Fingerabdrücke gegen Doppel-Einreichungen (MU-DU-04/-05)
+            'inhalt_hash' => BelegFingerabdruck::inhalt(
+                $uid ?? $rksv?->kassenId ?? $text->aussteller(),
+                $datum ? substr($datum, 0, 10) : null,
+                $datum ? substr($datum, 11, 5) : null,
+                $gedruckt->gesamtCent ?? $rksv?->summeCent(),
+                $rksv?->belegnummer,
+            ),
+            'text_hash' => BelegFingerabdruck::text($text->text()),
             ...$this->pruefeQr($qr, $gedruckt),
         ];
     }

@@ -4,7 +4,7 @@ import io
 
 import qrcode
 from fastapi.testclient import TestClient
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from app import app
 
@@ -48,3 +48,59 @@ def test_kein_code():
 def test_kaputte_datei():
     antwort = client.post("/qr", files={"datei": ("x.jpg", b"kein bild", "image/jpeg")})
     assert antwort.status_code == 422
+
+
+# ---------- Sprint 2: Texterkennung ----------
+
+BON_ZEILEN = [
+    "GASTHAUS ZUR LINDE",
+    "Hauptplatz 3, 9570 Ossiach",
+    "UID: ATU12345678",
+    "",
+    "2 x Wiener Schnitzel      37,80",
+    "1 x Kaesespaetzle         14,20",
+    "3 x Zipfer Maerzen 0,5    15,30",
+    "1 x Mineral               3,40",
+    "",
+    "SUMME EUR                 70,70",
+    "Bar                       70,70",
+    "",
+    "MwSt  Netto  Steuer  Brutto",
+    "10%   47,27   4,73   52,00",
+    "20%   15,58   3,12   18,70",
+    "",
+    "Kassen-ID: KASSE-01",
+    "Beleg-Nr.: 4711",
+    "08.10.2026 19:42:11",
+]
+
+
+def thermobon(zeilen=BON_ZEILEN, qr_inhalt=None) -> bytes:
+    schrift = ImageFont.truetype("DejaVuSansMono.ttf", 26)
+    hoehe = 60 + len(zeilen) * 36 + (520 if qr_inhalt else 0)
+    bon = Image.new("L", (620, hoehe), 248)
+    z = ImageDraw.Draw(bon)
+    for i, zeile in enumerate(zeilen):
+        z.text((30, 30 + i * 36), zeile, fill=25, font=schrift)
+    if qr_inhalt:
+        bon.paste(qrcode.make(qr_inhalt).convert("L").resize((460, 460)), (80, 40 + len(zeilen) * 36))
+    puffer = io.BytesIO()
+    bon.save(puffer, format="JPEG", quality=85)
+    return puffer.getvalue()
+
+
+def test_lesen_liefert_text_und_qr():
+    antwort = client.post("/lesen", files={"datei": ("bon.jpg", thermobon(qr_inhalt=INHALT), "image/jpeg")})
+    assert antwort.status_code == 200
+    j = antwort.json()
+    assert [c["text"] for c in j["codes"]] == [INHALT]
+    assert j["quelle"] == "ocr"
+    assert "70,70" in j["text"]
+    assert "ATU12345678" in j["text"]
+    assert j["sicherheit"] > 0.7
+
+
+def test_textschicht_nur_bei_pdf():
+    from app import pdf_textschicht
+
+    assert pdf_textschicht(_bon(INHALT)) is None

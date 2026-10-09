@@ -157,8 +157,9 @@ class RksvPrueferTest extends TestCase
         $g = new GedruckteWerte(gesamtCent: 8420, lesesicherheit: ['gesamt' => 0.5]);
         $e = $this->pruefe(RksvTestBeleg::neu()->qr(), $g);
 
-        $this->assertSame(Stufe::Hinweis, $e['AT-QR-04']->stufe);
+        $this->assertSame(Stufe::Auffaellig, $e['AT-QR-04']->stufe);
         $this->assertStringContainsString('am Bild prüfen', $e['AT-QR-04']->begruendung);
+        $this->assertSame('gelb', (new Risikobewertung(array_values($e)))->ampel());
     }
 
     public function test_beleg_mit_kopiertem_qr_anderer_zeitpunkt(): void

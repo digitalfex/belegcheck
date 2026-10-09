@@ -7,7 +7,7 @@ use RuntimeException;
 
 /**
  * Spricht mit dem internen Python-Dienst „Belegleser“.
- * Sprint 1: nur QR-Dekodierung (POST /qr, Datei als multipart).
+ * POST /qr: nur QR-Codes; POST /lesen: QR-Codes + Text mit Lesesicherheit.
  */
 final class BelegleserClient
 {
@@ -39,5 +39,27 @@ final class BelegleserClient
         }
 
         return $antwort->json('codes', []);
+    }
+
+    /**
+     * QR-Codes und Text in einem Durchgang (Sprint 2).
+     *
+     * @return array{codes: list<array>, text: string, zeilen: list<array{text: string, sicherheit: float}>, sicherheit: float, quelle: string}
+     */
+    public function lesen(string $pfad): array
+    {
+        if (! is_readable($pfad)) {
+            throw new RuntimeException("Datei nicht lesbar: $pfad");
+        }
+
+        $antwort = Http::timeout($this->timeout)
+            ->attach('datei', fopen($pfad, 'r'), basename($pfad))
+            ->post(rtrim($this->url, '/').'/lesen');
+
+        if ($antwort->failed()) {
+            throw new RuntimeException('Belegleser antwortet mit HTTP '.$antwort->status().': '.$antwort->body());
+        }
+
+        return $antwort->json();
     }
 }
