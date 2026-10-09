@@ -7,7 +7,7 @@ User=belegcheck
 Group=belegcheck
 WorkingDirectory=/srv/belegcheck/app/public
 Environment=PHP_CLI_SERVER_WORKERS=4
-ExecStart=/usr/bin/php -d upload_max_filesize=25M -d post_max_size=30M -d max_execution_time=120 -S 127.0.0.1:8081 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php
+ExecStart=/usr/bin/php -d upload_max_filesize=25M -d post_max_size=30M -d max_execution_time=120 -S 127.0.0.1:8095 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
