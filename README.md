@@ -45,4 +45,4 @@ php artisan beleg:pruefe bon.jpg --gedruckt=soll.json --json
 
 ## Server
 
-Schritt-für-Schritt-Einrichtung: [docs/SERVER-SPRINT1.md](docs/SERVER-SPRINT1.md)
+Schritt-für-Schritt-Einrichtung: [docs/SERVER-SPRINT1.md](docs/SERVER-SPRINT1.md) · Werkbank: [docs/WERKBANK.md](docs/WERKBANK.md)

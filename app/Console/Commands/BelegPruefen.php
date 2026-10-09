@@ -2,14 +2,9 @@
 
 namespace App\Console\Commands;
 
-use App\Belegleser\BelegleserClient;
 use App\Fiskal\GedruckteWerte;
-use App\Fiskal\Rksv\RksvParser;
 use App\Fiskal\Rksv\RksvPruefer;
-use App\Hashes\BelegFingerabdruck;
-use App\Pruefung\PruefErgebnis;
-use App\Pruefung\Risikobewertung;
-use App\Pruefung\Stufe;
+use App\Pruefung\BelegPruefService;
 use Illuminate\Console\Command;
 
 /**
@@ -45,29 +40,10 @@ class BelegPruefen extends Command
             $gedruckt = GedruckteWerte::fromArray(json_decode(file_get_contents($pfad), true, flags: JSON_THROW_ON_ERROR));
         }
 
-        $bericht = ['datei' => $datei, 'datei_sha256' => $datei ? BelegFingerabdruck::datei($datei) : null];
-
-        if (! $qr) {
-            $codes = BelegleserClient::ausConfig()->qrCodes($datei);
-            $bericht['gefundene_codes'] = $codes;
-            $qr = collect($codes)->first(fn ($c) => RksvParser::istRksv($c['text']))['text'] ?? null;
-        }
-
-        if ($qr === null) {
-            $ergebnisse = [new PruefErgebnis('AT-QR-01', Stufe::NichtPruefbar,
-                'Kein österreichischer Kassen-QR-Code im Bild gefunden. (Sprint 1 prüft nur AT-QR-Codes; ob der Code fehlen darf, prüft ab Sprint 2 die Landeserkennung.)')];
-            $beleg = null;
-        } else {
-            ['beleg' => $beleg, 'ergebnisse' => $ergebnisse] = (new RksvPruefer)->pruefe($qr, $gedruckt);
-        }
-
-        $bewertung = new Risikobewertung($ergebnisse);
-        $bericht += [
-            'qr' => $beleg?->toArray(),
-            'risikowert' => $bewertung->risikowert(),
-            'ampel' => $bewertung->ampel(),
-            'ergebnisse' => array_map(fn (PruefErgebnis $e) => $e->toArray(), $ergebnisse),
-        ];
+        $service = new BelegPruefService;
+        $bericht = ['datei' => $datei] + ($qr ? $service->pruefeQr($qr, $gedruckt) : $service->pruefeDatei($datei, $gedruckt));
+        $ergebnisse = $bericht['ergebnisse'];
+        $beleg = $bericht['qr'];
 
         if ($this->option('json')) {
             $this->line(json_encode($bericht, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -78,22 +54,22 @@ class BelegPruefen extends Command
         if ($beleg) {
             $this->info('Kassen-QR-Code');
             $this->table(['Feld', 'Wert'], [
-                ['Kennzeichen', $beleg->algorithmus],
-                ['Kassen-ID', $beleg->kassenId],
-                ['Belegnummer', $beleg->belegnummer],
-                ['Datum/Uhrzeit', $beleg->datumUhrzeit],
-                ['Summe', RksvPruefer::eur($beleg->summeCent())],
+                ['Kennzeichen', $beleg['algorithmus']],
+                ['Kassen-ID', $beleg['kassen_id']],
+                ['Belegnummer', $beleg['belegnummer']],
+                ['Datum/Uhrzeit', $beleg['datum_uhrzeit']],
+                ['Summe', RksvPruefer::eur($beleg['summe_cent'])],
             ]);
         }
 
         $this->info('Prüfergebnisse');
         $this->table(['Code', 'Stufe', 'Begründung'], array_map(
-            fn (PruefErgebnis $e) => [$e->code, $e->stufe->value, wordwrap($e->begruendung, 90)],
+            fn (array $e) => [$e['code'], $e['stufe'], wordwrap($e['begruendung'], 90)],
             $ergebnisse,
         ));
 
-        $farbe = ['gruen' => 'info', 'gelb' => 'comment', 'rot' => 'error'][$bewertung->ampel()];
-        $this->$farbe(sprintf('Risikowert %d → %s', $bewertung->risikowert(), strtoupper($bewertung->ampel())));
+        $farbe = ['gruen' => 'info', 'gelb' => 'comment', 'rot' => 'error'][$bericht['ampel']];
+        $this->$farbe(sprintf('Risikowert %d → %s', $bericht['risikowert'], strtoupper($bericht['ampel'])));
 
         return self::SUCCESS;
     }

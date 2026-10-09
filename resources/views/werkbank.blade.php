@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Beleg-Check · Werkbank</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
+    --accent: #1f4e79; --gruen: #2e7d4f; --gelb: #b7791f; --rot: #b3261e; --grau: #8a8984;
+    --gruen-bg: #e6f2ea; --gelb-bg: #fbf1de; --rot-bg: #fbe5e3; --grau-bg: #efeeea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 20px 28px 8px; display: flex; align-items: baseline; gap: 14px; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: -.01em; }
+  header span { color: var(--muted); }
+  main { padding: 8px 28px 40px; max-width: 1400px; }
+
+  .drop { border: 2px dashed var(--line); border-radius: 12px; background: var(--panel); padding: 28px; text-align: center; transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: #eef3f8; }
+  .drop p { margin: 0 0 14px; color: var(--muted); }
+  .drop strong { color: var(--ink); }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=file] { display: none; }
+
+  .leiste { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 10px; }
+  .zahl { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+  .leiste .platz { flex: 1; }
+  .fortschritt { color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); background: #faf9f6; white-space: nowrap; }
+  tr.beleg { cursor: pointer; }
+  tr.beleg:hover td { background: #fbfaf8; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.datei { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+
+  .ampel { display: inline-block; min-width: 64px; text-align: center; padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .gruen { background: var(--gruen-bg); color: var(--gruen); }
+  .gelb  { background: var(--gelb-bg);  color: var(--gelb); }
+  .rot   { background: var(--rot-bg);   color: var(--rot); }
+  .grau  { background: var(--grau-bg);  color: var(--grau); }
+  .dublette { color: var(--rot); font-weight: 600; font-size: 12px; }
+
+  tr.detail td { background: #fbfaf8; padding: 14px 18px 18px; }
+  .ergebnis { display: grid; grid-template-columns: 90px 110px 1fr; gap: 4px 12px; margin: 0 0 14px; }
+  .ergebnis div { padding: 2px 0; }
+  .stufe-ok { color: var(--gruen); } .stufe-hinweis { color: var(--gelb); } .stufe-auffaellig { color: var(--gelb); font-weight: 600; }
+  .stufe-widerspruch { color: var(--rot); font-weight: 600; } .stufe-nicht_pruefbar { color: var(--grau); }
+  .vergleich { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding-top: 10px; border-top: 1px solid var(--line); }
+  .vergleich label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 3px; }
+  .vergleich input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; width: 150px; }
+  .qrroh { margin-top: 10px; word-break: break-all; color: var(--muted); }
+  .leer { color: var(--muted); text-align: center; padding: 28px; }
+  .fehler { color: var(--rot); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · nichts wird gespeichert</span>
+</header>
+<main>
+  <div class="drop" id="drop">
+    <p><strong>Belege oder ganze Ordner hierher ziehen</strong><br>JPG, PNG, HEIC, PDF · mehrere auf einmal</p>
+    <button class="primary" id="btnDateien">Dateien wählen</button>
+    <button id="btnOrdner">Ordner wählen</button>
+    <input type="file" id="inDateien" multiple accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.pdf">
+    <input type="file" id="inOrdner" webkitdirectory multiple>
+  </div>
+
+  <div class="leiste">
+    <span class="zahl gruen" id="nGruen">0 grün</span>
+    <span class="zahl gelb" id="nGelb">0 gelb</span>
+    <span class="zahl rot" id="nRot">0 rot</span>
+    <span class="zahl grau" id="nOhne">0 ohne QR</span>
+    <span class="fortschritt" id="fortschritt"></span>
+    <span class="platz"></span>
+    <button id="btnCsv" disabled>Als CSV speichern</button>
+    <button id="btnLeeren" disabled>Liste leeren</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Datei</th><th>Ampel</th><th>Datum/Uhrzeit</th><th>Kassen-ID</th><th>Belegnummer</th><th class="num">Summe QR</th><th class="num">Gedruckt</th><th>Hinweis</th></tr>
+    </thead>
+    <tbody id="liste"><tr><td colspan="8" class="leer">Noch keine Belege geprüft.</td></tr></tbody>
+  </table>
+  <footer>Zeile anklicken für Details. Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
+</main>
+
+<script>
+const CSRF = document.querySelector('meta[name=csrf-token]').content;
+const ERLAUBT = /\.(jpe?g|png|heic|heif|webp|pdf)$/i;
+const PARALLEL = 2;
+const belege = [];          // {id, name, status, daten, gedruckt}
+const warteschlange = [];
+let laufend = 0;
+
+const $ = id => document.getElementById(id);
+const eur = c => c == null ? '' : (c / 100).toLocaleString('de-AT', { minimumFractionDigits: 2 }) + ' €';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const AMPEL_TEXT = { gruen: 'grün', gelb: 'gelb', rot: 'rot' };
+
+// ---------- Dateien sammeln ----------
+$('btnDateien').onclick = () => $('inDateien').click();
+$('btnOrdner').onclick = () => $('inOrdner').click();
+$('inDateien').onchange = e => { hinzufuegen([...e.target.files]); e.target.value = ''; };
+$('inOrdner').onchange = e => { hinzufuegen([...e.target.files]); e.target.value = ''; };
+
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', async e => {
+  const eintraege = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  const dateien = [];
+  for (const eintrag of eintraege) await einsammeln(eintrag, dateien);
+  hinzufuegen(dateien);
+});
+
+// Ordner rekursiv durchlaufen
+async function einsammeln(eintrag, ziel) {
+  if (eintrag.isFile) {
+    ziel.push(await new Promise(r => eintrag.file(r)));
+  } else if (eintrag.isDirectory) {
+    const leser = eintrag.createReader();
+    let teil;
+    do {
+      teil = await new Promise(r => leser.readEntries(r));
+      for (const kind of teil) await einsammeln(kind, ziel);
+    } while (teil.length);
+  }
+}
+
+function hinzufuegen(dateien) {
+  const passend = dateien.filter(d => ERLAUBT.test(d.name));
+  for (const datei of passend) {
+    const b = { id: belege.length, name: datei.webkitRelativePath || datei.name, status: 'wartet', daten: null, gedruckt: {} };
+    belege.push(b);
+    warteschlange.push({ b, datei });
+  }
+  zeichnen();
+  weiter();
+}
+
+// ---------- Prüfen ----------
+function weiter() {
+  while (laufend < PARALLEL && warteschlange.length) {
+    const { b, datei } = warteschlange.shift();
+    laufend++;
+    b.status = 'prüft';
+    zeichnen();
+    hochladen(b, datei).finally(() => { laufend--; zeichnen(); weiter(); });
+  }
+}
+
+async function hochladen(b, datei) {
+  const fd = new FormData();
+  fd.append('datei', datei);
+  try {
+    const r = await fetch('/pruefen', { method: 'POST', body: fd, headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' } });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.fehler || j.message || ('HTTP ' + r.status));
+    b.daten = j;
+    b.status = 'fertig';
+  } catch (e) {
+    b.status = 'fehler';
+    b.fehler = e.message;
+  }
+}
+
+async function nachpruefen(b) {
+  const r = await fetch('/nachpruefen', {
+    method: 'POST',
+    headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ qr_text: b.daten.qr_text, ...b.gedruckt }),
+  });
+  const j = await r.json();
+  if (r.ok) { b.daten = { ...b.daten, ...j }; zeichnen(); }
+}
+
+// ---------- Dubletten innerhalb der Liste ----------
+function dubletten() {
+  const nachDatei = {}, nachFiskal = {};
+  for (const b of belege) {
+    if (!b.daten) continue;
+    (nachDatei[b.daten.datei_sha256] ??= []).push(b);
+    if (b.daten.fiskal_schluessel) (nachFiskal[b.daten.fiskal_schluessel] ??= []).push(b);
+  }
+  const hinweise = {};
+  for (const gruppe of Object.values(nachDatei)) if (gruppe.length > 1)
+    for (const b of gruppe) hinweise[b.id] = 'Gleiche Datei wie ' + gruppe.filter(x => x !== b).map(x => x.name).join(', ');
+  for (const gruppe of Object.values(nachFiskal)) if (gruppe.length > 1)
+    for (const b of gruppe) hinweise[b.id] ??= 'Gleicher Kassenbeleg wie ' + gruppe.filter(x => x !== b).map(x => x.name).join(', ');
+  return hinweise;
+}
+
+// ---------- Anzeige ----------
+let offen = null;
+
+function zeichnen() {
+  const tb = $('liste');
+  if (!belege.length) {
+    tb.innerHTML = '<tr><td colspan="8" class="leer">Noch keine Belege geprüft.</td></tr>';
+  } else {
+    const dub = dubletten();
+    tb.innerHTML = belege.map(b => zeile(b, dub[b.id]) + (offen === b.id && b.daten ? detail(b) : '')).join('');
+  }
+
+  const fertig = belege.filter(b => b.daten);
+  const zaehle = f => fertig.filter(f).length;
+  $('nGruen').textContent = zaehle(b => b.daten.qr && b.daten.ampel === 'gruen') + ' grün';
+  $('nGelb').textContent = zaehle(b => b.daten.qr && b.daten.ampel === 'gelb') + ' gelb';
+  $('nRot').textContent = zaehle(b => b.daten.qr && b.daten.ampel === 'rot') + ' rot';
+  $('nOhne').textContent = zaehle(b => !b.daten.qr) + ' ohne QR';
+  const offenZahl = belege.filter(b => b.status === 'wartet' || b.status === 'prüft').length;
+  $('fortschritt').textContent = offenZahl ? `prüfe … noch ${offenZahl}` : (belege.length ? `${belege.length} Belege` : '');
+  $('btnCsv').disabled = !fertig.length;
+  $('btnLeeren').disabled = !belege.length || offenZahl > 0;
+}
+
+function zeile(b, dublette) {
+  const d = b.daten, q = d?.qr;
+  let ampel;
+  if (b.status === 'fehler') ampel = '<span class="ampel rot">Fehler</span>';
+  else if (!d) ampel = `<span class="ampel grau">${b.status}</span>`;
+  else if (!q) ampel = '<span class="ampel grau">ohne QR</span>';
+  else ampel = `<span class="ampel ${d.ampel}">${AMPEL_TEXT[d.ampel]} · ${d.risikowert}</span>`;
+
+  const auffaellig = d?.ergebnisse.filter(e => !['ok', 'nicht_pruefbar'].includes(e.stufe)) ?? [];
+  const hinweis = b.status === 'fehler' ? `<span class="fehler">${esc(b.fehler)}</span>`
+    : dublette ? `<span class="dublette">${esc(dublette)}</span>`
+    : esc(auffaellig.map(e => e.code).join(', '));
+
+  return `<tr class="beleg" onclick="umschalten(${b.id})">
+    <td class="datei" title="${esc(b.name)}">${esc(b.name)}</td>
+    <td>${ampel}</td>
+    <td class="mono">${esc(q?.datum_uhrzeit?.replace('T', ' '))}</td>
+    <td class="mono">${esc(q?.kassen_id)}</td>
+    <td class="mono">${esc(q?.belegnummer)}</td>
+    <td class="num">${eur(q?.summe_cent)}</td>
+    <td class="num">${esc(b.gedruckt.gesamt ?? '')}</td>
+    <td>${hinweis}</td>
+  </tr>`;
+}
+
+function detail(b) {
+  const d = b.daten;
+  const RANG = { widerspruch: 0, auffaellig: 1, hinweis: 2, nicht_pruefbar: 3, ok: 4 };
+  const sortiert = [...d.ergebnisse].sort((a, b) => RANG[a.stufe] - RANG[b.stufe]);
+  const ergebnisse = sortiert.map(e => `
+    <div class="mono">${esc(e.code)}</div>
+    <div class="stufe-${e.stufe}">${esc(e.stufe.replace('_', ' '))}</div>
+    <div>${esc(e.begruendung)}</div>`).join('');
+  const g = b.gedruckt;
+  const vergleich = d.qr ? `
+    <div class="vergleich" onclick="event.stopPropagation()">
+      <label>Gedruckter Gesamtbetrag<input id="g_gesamt" placeholder="92,60" value="${esc(g.gesamt ?? '')}"></label>
+      <label>Gedrucktes Datum/Uhrzeit<input id="g_datum" placeholder="05.10.2026 22:37" value="${esc(g.datum_uhrzeit ?? '')}"></label>
+      <label>Gedruckte Kassen-ID<input id="g_kasse" placeholder="Pos10918" value="${esc(g.kassen_id ?? '')}"></label>
+      <button class="primary" onclick="gedrucktPruefen(${b.id})">Mit Gedrucktem vergleichen</button>
+    </div>
+    <div class="qrroh mono">QR-Inhalt: ${esc(d.qr_text)}</div>` : '';
+  return `<tr class="detail"><td colspan="8"><div class="ergebnis">${ergebnisse}</div>${vergleich}</td></tr>`;
+}
+
+window.umschalten = id => { offen = offen === id ? null : id; zeichnen(); };
+window.gedrucktPruefen = id => {
+  const b = belege[id];
+  b.gedruckt = { gesamt: $('g_gesamt').value.trim(), datum_uhrzeit: $('g_datum').value.trim(), kassen_id: $('g_kasse').value.trim() };
+  nachpruefen(b);
+};
+
+$('btnLeeren').onclick = () => { belege.length = 0; offen = null; zeichnen(); };
+
+// ---------- CSV (Testsatz) ----------
+$('btnCsv').onclick = () => {
+  const kopf = ['datei', 'ampel', 'risikowert', 'datum_uhrzeit', 'kassen_id', 'belegnummer', 'summe_qr', 'gedruckt_gesamt', 'auffaellig', 'qr_text'];
+  const zeilen = belege.filter(b => b.daten).map(b => {
+    const d = b.daten, q = d.qr || {};
+    return [b.name, d.qr ? d.ampel : 'ohne_qr', d.risikowert, q.datum_uhrzeit, q.kassen_id, q.belegnummer,
+      q.summe_cent != null ? (q.summe_cent / 100).toFixed(2).replace('.', ',') : '', b.gedruckt.gesamt ?? '',
+      d.ergebnisse.filter(e => !['ok', 'nicht_pruefbar'].includes(e.stufe)).map(e => e.code).join(' '), d.qr_text ?? ''];
+  });
+  const csv = [kopf, ...zeilen].map(z => z.map(f => '"' + String(f ?? '').replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'belegcheck-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+};
+</script>
+</body>
+</html>
