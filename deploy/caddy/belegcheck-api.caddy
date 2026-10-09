@@ -1,6 +1,6 @@
 # Belegcheck – öffentliche Schnittstelle (nur /api/*). Die Werkbank bleibt intern (SSH-Tunnel).
 # Ablage am Server: /etc/caddy/instanzen/belegcheck-api.caddy (wird vom Caddyfile des Servers eingebunden).
-api.belegcheck.at {
+belegcheck.digitalfex.com {
 	encode zstd gzip
 	request_body {
 		max_size 260MB

@@ -28,7 +28,7 @@ Einstellungen je Mandant: `--freigabe-ab=90`, `--compliance=gluecksspiel=erlaubt
 Synchron (Ergebnis direkt in der Antwort):
 
 ```bash
-curl -s https://api.belegcheck.at/api/v1/pruefungen \
+curl -s https://belegcheck.digitalfex.com/api/v1/pruefungen \
   -H "Authorization: Bearer bc_…" -H "Idempotency-Key: SP-2026-0815-1" \
   -F datei=@beleg.pdf -F externe_referenz=SP-2026-0815 -F einreicher=MA-17 \
   -F betrag=46,00 -F datum=2025-06-13 -F kategorie=bewirtung
@@ -37,8 +37,8 @@ curl -s https://api.belegcheck.at/api/v1/pruefungen \
 Asynchron (sofort `202`, Ergebnis per Webhook oder Abruf):
 
 ```bash
-curl -si https://api.belegcheck.at/api/v1/pruefungen -H "Authorization: Bearer bc_…" -H "Prefer: respond-async" -F datei=@beleg.jpg
-curl -s  https://api.belegcheck.at/api/v1/pruefungen/01JA… -H "Authorization: Bearer bc_…"
+curl -si https://belegcheck.digitalfex.com/api/v1/pruefungen -H "Authorization: Bearer bc_…" -H "Prefer: respond-async" -F datei=@beleg.jpg
+curl -s  https://belegcheck.digitalfex.com/api/v1/pruefungen/01JA… -H "Authorization: Bearer bc_…"
 ```
 
 JSON statt Formular: `{"datei_base64": "…", "dateiname": "beleg.pdf", "betrag": "46,00", …}`.
@@ -46,11 +46,11 @@ JSON statt Formular: `{"datei_base64": "…", "dateiname": "beleg.pdf", "betrag"
 Stapel (z. B. eine Reisekostenabrechnung, immer asynchron, ein Webhook `stapel.fertig` am Ende):
 
 ```bash
-curl -si https://api.belegcheck.at/api/v1/stapel -H "Authorization: Bearer bc_…" -H "Idempotency-Key: RK-2026-17" \
+curl -si https://belegcheck.digitalfex.com/api/v1/stapel -H "Authorization: Bearer bc_…" -H "Idempotency-Key: RK-2026-17" \
   -F externe_referenz=RK-2026-17 -F einreicher=MA-17 \
   -F "dateien[]=@hotel.pdf" -F "dateien[]=@abendessen.jpg" -F "dateien[]=@taxi.jpg" \
   -F 'positionen=[{"externe_referenz":"P1","kategorie":"uebernachtung"},{"externe_referenz":"P2","betrag":"86,40","kategorie":"bewirtung"},{"externe_referenz":"P3","kategorie":"fahrt"}]'
-curl -s https://api.belegcheck.at/api/v1/stapel/01JA… -H "Authorization: Bearer bc_…"
+curl -s https://belegcheck.digitalfex.com/api/v1/stapel/01JA… -H "Authorization: Bearer bc_…"
 ```
 
 Ergebnis des Stapels: Fortschritt, Zusammenfassung (strengste Ampel und Empfehlung, Summe aller Belege, Anzahl zu prüfender
@@ -60,7 +60,7 @@ Höchstens 100 Belege je Stapel; JSON-Variante: `{"belege": [{"datei_base64": "�
 Entscheidung zurückmelden (verbessert das Kassen-Gedächtnis):
 
 ```bash
-curl -s https://api.belegcheck.at/api/v1/pruefungen/01JA…/entscheidung -H "Authorization: Bearer bc_…" \
+curl -s https://belegcheck.digitalfex.com/api/v1/pruefungen/01JA…/entscheidung -H "Authorization: Bearer bc_…" \
   -H "Content-Type: application/json" -d '{"ergebnis":"in_ordnung"}'
 ```
 
@@ -98,8 +98,8 @@ Pfandleihe/Geldtransfer, Waffen → `pruefen`; Tabakwaren → `hinweis`.
 ## Betrieb
 
 - Asynchrone Prüfungen und Webhooks laufen über `belegcheck-queue.service` (Laravel-Queue in der Datenbank).
-- Von außen erreichbar nur über Caddy (HTTPS, automatisches Zertifikat) unter `https://api.belegcheck.at` und nur
+- Von außen erreichbar nur über Caddy (HTTPS, automatisches Zertifikat) unter `https://belegcheck.digitalfex.com` und nur
   der Pfad `/api/*`; die Werkbank bleibt intern. Konfiguration: `deploy/caddy/belegcheck-api.caddy`
-  → `/etc/caddy/instanzen/belegcheck-api.caddy`. Voraussetzung: DNS-Eintrag `api.belegcheck.at` (A/AAAA) zeigt auf den Server.
+  → `/etc/caddy/instanzen/belegcheck-api.caddy`. Voraussetzung: DNS-Eintrag `belegcheck.digitalfex.com` (A/AAAA) zeigt auf den Server.
 - Öffentliche Overpass-Server (OpenStreetMap) sind für geringe Mengen gedacht; bei vielen Belegen eigenen
   Overpass-Server betreiben und `BELEG_OVERPASS_URL` setzen. Screening abschalten: `BELEG_SCREENING=false`.
