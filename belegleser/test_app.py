@@ -157,13 +157,14 @@ def test_forensik_ki_herkunft():
     assert "IPTC-Herkunftsangabe „KI-erzeugt“" in j["forensik"]["ki_kennzeichen"]
 
 
-def test_zweitlesung_liest_betraege():
-    """RapidOCR als unabhängige zweite Lesung (nur wenn installiert)."""
+def test_rapidocr_fuehrt_tesseract_prueft_gegen():
+    """RapidOCR ist die führende Lesung, Tesseract die Gegenlesung (nur wenn RapidOCR installiert)."""
     import pytest
     from app import _rapid
 
     if _rapid() is None:
-        pytest.skip("rapidocr_onnxruntime nicht installiert")
+        pytest.skip("rapidocr nicht installiert")
     j = client.post("/lesen", files={"datei": ("bon.png", _bon(INHALT), "image/png")}).json()
-    assert "37,80" in j["zweitlesung"].replace(" ", "")
-    assert any("37,80" in z["text"].replace(" ", "") for z in j["alternativen"])
+    assert "37,80" in j["text"].replace(" ", "")
+    assert j["zweitlesung"] != ""  # Text der Tesseract-Lesung fürs Sprachmodell
+    assert any("44" in z["text"] for z in j["alternativen"])

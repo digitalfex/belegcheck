@@ -134,7 +134,7 @@ final class BelegTextAuswertung
         if (preg_match('/\b(TSE|Signaturz[äa]hler|Transaktionsnummer|Steuer-?Nr\.?\s*\d{2,3}\/)/iu', $text)) {
             return 'DE';
         }
-        if (preg_match('/\b(Kassen-?ID|Registrierkasse|RKSV|Austria|Österreich)\b/iu', $text) || preg_match('/\b\d{4}\s+(Wien|Graz|Linz|Salzburg|Innsbruck|Klagenfurt|Villach)\b/u', $text)) {
+        if (preg_match('/\b(Kassen-?ID|Registrierkasse|RKSV|Austria|Österreich)\b/iu', $text) || preg_match('/\b\d{4}\s+(Wien|Graz|Linz|Salzburg|Innsbruck|Klagenfurt|Villach)\b/iu', $text)) {
             return 'AT';
         }
 
@@ -207,7 +207,7 @@ final class BelegTextAuswertung
     }
 
     /** Zeilen im Kopf, die nicht der Name sind: Belegart-Vermerke, Adresse, Kontakt, Kennnummern. */
-    private const KEIN_NAME = '/(duplikat|kopie|kunden\w*|beleg|rechnung|quittung|quit+ung|bank\s*karte|willkommen|welcome|tel\.?|fax|www\.|@|\bUID\b|\bATU\s?\d|\bDE\s?\d{9}|stra(ss|ß)e\s*\d|str\.\s*\d|(gasse|weg|platz|allee|ring|markt)\s*\d|^\W*\d{4,5}\s+\p{L})/iu';
+    private const KEIN_NAME = '/(duplikat|kopie|tisch\s*[:#]?\s*\w|kellner|bedienung|kunden\w*|beleg|rechnung|quittung|quit+ung|bank\s*karte|willkommen|welcome|tel\.?|fax|www\.|@|\bUID\b|\bATU\s?\d|\bDE\s?\d{9}|stra(ss|ß)e\s*\d|str\.\s*\d|(gasse|weg|platz|allee|ring|markt)\s*\d|^\W*\d{4,5}\s+\p{L})/iu';
 
     /**
      * Name des Ausstellers: erste brauchbare Zeile im Kopf. Übersprungen werden Vermerke („DUPLIKAT“, „Kundenbeleg“),
@@ -280,7 +280,8 @@ final class BelegTextAuswertung
         $sicherheit = $auswahl[0]['sicherheit'];
 
         // Weicht der gelesene Betrag nur in einer Ziffer vom QR ab, ist ein Lesefehler wahrscheinlich (0↔9, 1↔7, 3↔8 …)
-        if ($f && $f['summe'] !== null && self::eineZifferAnders($wert, $f['summe'])) {
+        // ebenso eine zusätzliche Ziffer davor („€46,00“ als „646,00“ gelesen)
+        if ($f && $f['summe'] !== null && (self::eineZifferAnders($wert, $f['summe']) || self::zifferDavor($wert, $f['summe']))) {
             $sicherheit = min($sicherheit, self::UNSICHERE_ZUORDNUNG);
         }
 
@@ -308,6 +309,15 @@ final class BelegTextAuswertung
         $b = preg_replace('/\D/', '', $b);
 
         return strlen($a) === strlen($b) ? count(array_diff_assoc(str_split($a), str_split($b))) : PHP_INT_MAX;
+    }
+
+    /** „646,00“ statt „46,00“: Währungszeichen als Ziffer gelesen */
+    private static function zifferDavor(int $gelesen, int $soll): bool
+    {
+        $g = (string) abs($gelesen);
+        $s = (string) abs($soll);
+
+        return strlen($g) === strlen($s) + 1 && str_ends_with($g, $s);
     }
 
     private static function eineZifferAnders(int $a, int $b): bool

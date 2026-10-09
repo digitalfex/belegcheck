@@ -110,6 +110,26 @@ class BelegTextAuswertungTest extends TestCase
         $this->assertFalse($g->sicher('gesamt'));
     }
 
+    public function test_endsumme_vor_teilsummen(): void
+    {
+        $text = "Summe Arbeiten 158,33\nSumme Teile 200,25\nSumme Sonstige 5,37\nExcl. MWSt. 363,95\nSumme Brutto 436,74";
+        $this->assertSame(43674, BelegTextAuswertung::ausText($text)->gedruckteWerte()->gesamtCent);
+        $this->assertSame(20025, BelegTextAuswertung::ausText("Summe Arbeiten 158,33\nSumme Teile 200,25")->gedruckteWerte()->gesamtCent);
+    }
+
+    public function test_waehrungszeichen_als_ziffer_ist_lesefehler(): void
+    {
+        // QR 70,70 – RapidOCR liest „€70,70“ als „670,70“ → nur unsicher (Hinweis statt Widerspruch)
+        $g = BelegTextAuswertung::ausText("Total 670,70\n08.10.2026 19:42", 0.97)->gedruckteWerte($this->qr());
+        $this->assertSame(67070, $g->gesamtCent);
+        $this->assertFalse($g->sicher('gesamt'));
+
+        // Gegenlesung von Tesseract hat „€70,70“ richtig → QR-Wert bestätigt
+        $g = (new BelegTextAuswertung([['text' => 'Total 670,70', 'sicherheit' => 0.97]], [['text' => 'Total €70,70', 'sicherheit' => 0.8]]))
+            ->gedruckteWerte($this->qr());
+        $this->assertSame(7070, $g->gesamtCent);
+    }
+
     public function test_steuersaetze_einzeln_aus_anderer_lesevariante(): void
     {
         // Hauptvariante liest 3↔8 falsch (23,82 statt 28,82), zweite Variante liest den 10-%-Satz richtig
@@ -149,6 +169,8 @@ class BelegTextAuswertungTest extends TestCase
         $this->assertSame('Wiener tutte', BelegTextAuswertung::ausText("> } L\nWiener tutte\nRechnung RG2025/8388")->aussteller());
         $this->assertSame('Bu Le Burger', BelegTextAuswertung::ausText("Bu Le Burger _ N\nAuhof Center")->aussteller());
         $this->assertSame('Österreichische Post AG', BelegTextAuswertung::ausText("Österreichische Post AG\nUID-Nr: ATU46674503")->aussteller());
+        $this->assertSame('Wiener Hütte', BelegTextAuswertung::ausText("Tisch: Terrasse 11\nWiener Hütte")->aussteller());
+        $this->assertSame('AT', BelegTextAuswertung::ausText("Florianigarage\n1080 WIEN")->land());
         $this->assertSame('Messe Wien', BelegTextAuswertung::ausText("Hadikgasse 128-134\n= 1140 Wien\na Tel. 01/895 10 55\nMesse Wien")->aussteller());
     }
 

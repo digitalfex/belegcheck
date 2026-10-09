@@ -39,10 +39,12 @@ Entfernung (z. B. Wien und München am selben Abend), werden beide gelb (Regel M
 
 ## Texterkennung und Sprachmodell
 
-- **Tesseract mit `tessdata_best`** (genauere Modelle, wie beim Bescheidwisser): wird automatisch genutzt, wenn
-  `deu.traineddata` in `BELEGLESER_TESSDATA`, `/opt/belegcheck/tessdata_best` oder `/opt/fristwerk/erkennung/tessdata_best` liegt.
-- **Zweitlesung mit RapidOCR** (PaddleOCR-Modelle über ONNX, lokal, Modelle im pip-Paket): andere Technik als Tesseract,
-  liest Ziffern auf Thermobons deutlich zuverlässiger. Läuft parallel; fehlt das Paket, entfällt sie ohne Fehler.
+- **RapidOCR (PP-OCRv6) ist die führende Texterkennung** (Paket `rapidocr` + `onnxruntime`, Modelle im Paket, lokal auf CPU).
+  Messung an 13 echten Scans: Summe 11, Datum 11 von 13 ohne QR-Hilfe (Tesseract: 8 bzw. 9).
+  Schwäche: „€“ wird manchmal als 6 gelesen („646,00“) – gilt bei QR-Belegen als Lesefehler (Hinweis, kein Widerspruch).
+- **Tesseract als Gegenlesung** (drei Bildaufbereitungen, mit `tessdata_best`, wenn `deu.traineddata` in
+  `BELEGLESER_TESSDATA`, `/opt/belegcheck/tessdata_best` oder `/opt/fristwerk/erkennung/tessdata_best` liegt).
+  Bestätigt QR-Werte, die RapidOCR anders gelesen hat. Fehlt RapidOCR, ist Tesseract wieder führend.
 - **Lokales Sprachmodell** (`BELEG_SPRACHMODELL_URL`, z. B. das Qwen des Bescheidwissers auf `http://127.0.0.1:8081`):
   liest aus beiden Texterkennungen Summe, Datum, Steuersätze und Aussteller. Nur Adressen auf diesem Rechner sind erlaubt.
   Gefragt wird nur, wenn Werte fehlen oder nicht zum QR-Code passen (`BELEG_SPRACHMODELL_IMMER=true`: immer).
