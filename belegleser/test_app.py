@@ -155,3 +155,15 @@ def test_forensik_ki_herkunft():
     xmp = b'<x:xmpmeta><Iptc4xmpExt:DigitalSourceType>http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia</Iptc4xmpExt:DigitalSourceType></x:xmpmeta>'
     j = client.post("/lesen", files={"datei": ("bon.jpg", _jpeg_mit_exif(extra=xmp), "image/jpeg")}).json()
     assert "IPTC-Herkunftsangabe „KI-erzeugt“" in j["forensik"]["ki_kennzeichen"]
+
+
+def test_zweitlesung_liest_betraege():
+    """RapidOCR als unabhängige zweite Lesung (nur wenn installiert)."""
+    import pytest
+    from app import _rapid
+
+    if _rapid() is None:
+        pytest.skip("rapidocr_onnxruntime nicht installiert")
+    j = client.post("/lesen", files={"datei": ("bon.png", _bon(INHALT), "image/png")}).json()
+    assert "37,80" in j["zweitlesung"].replace(" ", "")
+    assert any("37,80" in z["text"].replace(" ", "") for z in j["alternativen"])

@@ -10,6 +10,7 @@ Start (Entwicklung):  uvicorn app:app --host 127.0.0.1 --port 8090
 from __future__ import annotations
 
 import io
+import os
 
 import pytesseract
 import zxingcpp
@@ -245,8 +246,29 @@ def _ocr_varianten(bild: Image.Image):
     yield "gross", _auf_hoehe(grau, 2600).filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
 
 
+# Genauere Tesseract-Modelle (tessdata_best, wie im Bescheidwisser). Reihenfolge: eigene Angabe,
+# gemeinsamer Ordner am Server, sonst die Standardmodelle des Systems.
+TESSDATA_KANDIDATEN = (os.environ.get("BELEGLESER_TESSDATA"), os.environ.get("TESSDATA_BEST"),
+                       "/opt/belegcheck/tessdata_best", "/opt/fristwerk/erkennung/tessdata_best")
+
+
+def _tesseract_modelle() -> tuple[str | None, str]:
+    """(tessdata-Ordner oder None, Sprachen). eng nur, wenn im selben Ordner vorhanden."""
+    from pathlib import Path
+
+    for ordner in TESSDATA_KANDIDATEN:
+        if ordner and (Path(ordner) / "deu.traineddata").is_file():
+            return ordner, "deu+eng" if (Path(ordner) / "eng.traineddata").is_file() else "deu"
+    return None, "deu+eng"
+
+
+TESSDATA, OCR_SPRACHEN = _tesseract_modelle()
+OCR_PSM = os.environ.get("BELEGLESER_PSM", "4")
+
+
 def _ocr(bild: Image.Image) -> list[dict]:
-    daten = pytesseract.image_to_data(bild, lang="deu+eng", config="--psm 4", output_type=pytesseract.Output.DICT)
+    config = f"--psm {OCR_PSM}" + (f' --tessdata-dir "{TESSDATA}"' if TESSDATA else "")
+    daten = pytesseract.image_to_data(bild, lang=OCR_SPRACHEN, config=config, output_type=pytesseract.Output.DICT)
     zeilen: dict[tuple, dict] = {}
     for i, wort in enumerate(daten["text"]):
         wort = wort.strip()
@@ -263,6 +285,56 @@ def _ocr(bild: Image.Image) -> list[dict]:
     ]
 
 
+_RAPID = None
+
+
+def _rapid():
+    """RapidOCR (PaddleOCR-Modelle über ONNX, lokal auf CPU) – optional; fehlt das Paket, entfällt die Zweitlesung."""
+    global _RAPID
+    if _RAPID is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+
+            _RAPID = RapidOCR()
+        except Exception:  # noqa: BLE001 – Paket nicht installiert oder für diese Python-Version nicht verfügbar
+            _RAPID = False
+    return _RAPID or None
+
+
+def zweitlesung(bild: Image.Image) -> list[dict]:
+    """
+    Unabhängige zweite Texterkennung mit anderer Technik als Tesseract. Liest Ziffern auf Thermobons
+    deutlich zuverlässiger, verwechselt aber „€“ mit 6/$/# und lässt Leerzeichen weg – daher nur als
+    zusätzliche Lesevariante und als zweite Quelle für das Sprachmodell, nicht als Hauptergebnis.
+    """
+    ocr = _rapid()
+    if ocr is None:
+        return []
+    import numpy as np
+
+    rgb = bild.convert("RGB")
+    ergebnis, _ = ocr(np.array(rgb)[:, :, ::-1].copy())
+    boxen = sorted(ergebnis or [], key=lambda r: (r[0][0][1] + r[0][2][1]) / 2)
+    zeilen, aktuell, mitte_vorher, hoehe_vorher = [], [], None, None
+
+    def abschliessen():
+        if aktuell:
+            aktuell.sort(key=lambda w: w[0])
+            zeilen.append({"text": " ".join(w[1] for w in aktuell),
+                           "sicherheit": round(sum(w[2] for w in aktuell) / len(aktuell), 2)})
+
+    # Textkästchen derselben Höhe zu einer Zeile zusammenfassen
+    for box, text, sicherheit in boxen:
+        mitte, hoehe = (box[0][1] + box[2][1]) / 2, box[2][1] - box[0][1]
+        if mitte_vorher is not None and abs(mitte - mitte_vorher) > 0.5 * max(hoehe, hoehe_vorher):
+            abschliessen()
+            aktuell = []
+        aktuell.append((box[0][0], text, float(sicherheit)))
+        mitte_vorher, hoehe_vorher = mitte, hoehe
+    abschliessen()
+    return zeilen
+
+
 def text_lesen(bild: Image.Image) -> dict:
     """
     Texterkennung in mehreren Varianten. Hauptergebnis = Variante mit der höchsten Lesesicherheit;
@@ -272,9 +344,11 @@ def text_lesen(bild: Image.Image) -> dict:
     from concurrent.futures import ThreadPoolExecutor
 
     varianten = list(_ocr_varianten(bild))
-    # Tesseract läuft als eigener Prozess je Variante → parallel
-    with ThreadPoolExecutor(max_workers=len(varianten)) as pool:
+    # Tesseract läuft als eigener Prozess je Variante → parallel, die Zweitlesung daneben
+    with ThreadPoolExecutor(max_workers=len(varianten) + 1) as pool:
+        zweit = pool.submit(zweitlesung, bild)
         ergebnisse = list(pool.map(lambda v: (v[0], _ocr(v[1])), varianten))
+        zweit_zeilen = zweit.result()
 
     laeufe = []
     for name, zeilen in ergebnisse:
@@ -282,7 +356,8 @@ def text_lesen(bild: Image.Image) -> dict:
             schnitt = sum(z["sicherheit"] for z in zeilen) / len(zeilen)
             laeufe.append((schnitt, name, zeilen))
     if not laeufe:
-        return {"text": "", "zeilen": [], "sicherheit": 0.0, "alternativen": [], "variante": None}
+        return {"text": "", "zeilen": [], "sicherheit": 0.0, "alternativen": zweit_zeilen, "variante": None,
+                "zweitlesung": "\n".join(z["text"] for z in zweit_zeilen)}
 
     laeufe.sort(key=lambda l: l[0], reverse=True)
     beste = laeufe[0]
@@ -291,13 +366,15 @@ def text_lesen(bild: Image.Image) -> dict:
         "zeilen": beste[2],
         "sicherheit": round(beste[0], 2),
         "variante": beste[1],
-        "alternativen": [z for _, _, zeilen in laeufe[1:] for z in zeilen],
+        "alternativen": [z for _, _, zeilen in laeufe[1:] for z in zeilen] + zweit_zeilen,
+        "zweitlesung": "\n".join(z["text"] for z in zweit_zeilen),
     }
 
 
 @app.get("/gesund")
 def gesund() -> dict:
-    return {"status": "ok", "version": app.version}
+    return {"status": "ok", "version": app.version, "ocr_modelle": "tessdata_best" if TESSDATA else "standard",
+            "ocr_sprachen": OCR_SPRACHEN, "zweitlesung": _rapid() is not None}
 
 
 @app.post("/qr")
@@ -353,6 +430,7 @@ async def lesen(datei: UploadFile = File(...)) -> dict:
         "text": "\n".join(s["text"] for s in seiten),
         "zeilen": [z for s in seiten for z in s["zeilen"]],
         "alternativen": [z for s in seiten for z in s.get("alternativen", [])],
+        "zweitlesung": "\n".join(s["zweitlesung"] for s in seiten if s.get("zweitlesung")),
         "sicherheit": round(sum(s["sicherheit"] for s in seiten) / len(seiten), 2) if seiten else 0.0,
         "quelle": "pdf-text" if textschicht is not None else "ocr",
         "forensik": forensik(daten, bilder),

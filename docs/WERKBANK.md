@@ -36,3 +36,16 @@ sudo -u belegcheck php /srv/belegcheck/app/artisan beleg:plz-import
 
 In der Werkbank gilt ein Upload-Stapel als Belege einer Person. Liegen zwei Belege zeitlich zu nah für ihre
 Entfernung (z. B. Wien und München am selben Abend), werden beide gelb (Regel MU-OZ-01).
+
+## Texterkennung und Sprachmodell
+
+- **Tesseract mit `tessdata_best`** (genauere Modelle, wie beim Bescheidwisser): wird automatisch genutzt, wenn
+  `deu.traineddata` in `BELEGLESER_TESSDATA`, `/opt/belegcheck/tessdata_best` oder `/opt/fristwerk/erkennung/tessdata_best` liegt.
+- **Zweitlesung mit RapidOCR** (PaddleOCR-Modelle über ONNX, lokal, Modelle im pip-Paket): andere Technik als Tesseract,
+  liest Ziffern auf Thermobons deutlich zuverlässiger. Läuft parallel; fehlt das Paket, entfällt sie ohne Fehler.
+- **Lokales Sprachmodell** (`BELEG_SPRACHMODELL_URL`, z. B. das Qwen des Bescheidwissers auf `http://127.0.0.1:8081`):
+  liest aus beiden Texterkennungen Summe, Datum, Steuersätze und Aussteller. Nur Adressen auf diesem Rechner sind erlaubt.
+  Gefragt wird nur, wenn Werte fehlen oder nicht zum QR-Code passen (`BELEG_SPRACHMODELL_IMMER=true`: immer).
+  Schutzregeln: Ein KI-Wert zählt nur, wenn er wörtlich im erkannten Text steht. Er bestätigt den QR-Wert oder füllt eine
+  Lücke mit Lesesicherheit 0,7 – eine Abweichung ergibt dadurch höchstens einen Hinweis, nie einen Widerspruch.
+  In der Werkbank sind solche Werte mit „KI“ markiert.

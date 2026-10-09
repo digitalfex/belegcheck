@@ -364,7 +364,8 @@ function gedrucktZelle(b) {
   const g = b.daten?.gedruckt;
   if (g?.gesamt_cent == null) return '';
   const unsicher = (g.lesesicherheit?.gesamt ?? 1) < 0.8;
-  return eur(g.gesamt_cent) + ` <span class="quelle${unsicher ? ' unsicher' : ''}">${b.daten.text_quelle === 'pdf-text' ? 'PDF' : 'OCR'}</span>`;
+  const quelle = (b.daten.ki?.felder ?? []).includes('gesamt') ? 'KI' : (b.daten.text_quelle === 'pdf-text' ? 'PDF' : 'OCR');
+  return eur(g.gesamt_cent) + ` <span class="quelle${unsicher ? ' unsicher' : ''}" title="${quelle === 'KI' ? 'vom lokalen Sprachmodell aus dem erkannten Text gelesen' : ''}">${quelle}</span>`;
 }
 
 function bitAbstand(a, b) {
@@ -388,7 +389,12 @@ function detail(b) {
     datum_uhrzeit: b.gedruckt.datum_uhrzeit ?? (auto.datum_uhrzeit ? auto.datum_uhrzeit.replace(/^(\d{4})-(\d{2})-(\d{2})/, '$3.$2.$1') : ''),
     kassen_id: b.gedruckt.kassen_id ?? auto.kassen_id ?? '',
   };
-  const textBlock = d.text ? `<details class="text" onclick="event.stopPropagation()"><summary>Erkannter Text (${d.text_quelle === 'pdf-text' ? 'aus PDF' : 'Texterkennung, Sicherheit ' + Math.round((d.text_sicherheit ?? 0) * 100) + ' %'}${d.uid ? ', UID ' + esc(d.uid) : ''})</summary><pre>${esc(d.text)}</pre></details>` : '';
+  const FELD = { gesamt: 'Summe', datum_uhrzeit: 'Datum/Uhrzeit', betraege: 'Steuersätze' };
+  const kiZeile = d.ki?.genutzt
+    ? `<p class="begruendung">Sprachmodell (lokal, ${Math.round((d.ki.dauer_ms ?? 0) / 1000)} s): ${d.ki.felder.length ? 'übernommen: ' + d.ki.felder.map(f => FELD[f] ?? f).join(', ') : 'keine Werte übernommen'}${d.aussteller_ocr && d.aussteller !== d.aussteller_ocr ? ` · Aussteller statt „${esc(d.aussteller_ocr)}“` : ''}</p>`
+    : '';
+  const textBlock = kiZeile + (d.text ? `<details class="text" onclick="event.stopPropagation()"><summary>Erkannter Text (${d.text_quelle === 'pdf-text' ? 'aus PDF' : 'Texterkennung, Sicherheit ' + Math.round((d.text_sicherheit ?? 0) * 100) + ' %'}${d.uid ? ', UID ' + esc(d.uid) : ''})</summary><pre>${esc(d.text)}</pre></details>` : '')
+    + (d.zweitlesung ? `<details class="text" onclick="event.stopPropagation()"><summary>Zweitlesung (RapidOCR)</summary><pre>${esc(d.zweitlesung)}</pre></details>` : '');
   const vergleich = d.qr ? `
     <div class="vergleich" onclick="event.stopPropagation()">
       <label>Gedruckter Gesamtbetrag (aus Text vorbefüllt)<input id="g_gesamt" placeholder="92,60" value="${esc(g.gesamt ?? '')}"></label>

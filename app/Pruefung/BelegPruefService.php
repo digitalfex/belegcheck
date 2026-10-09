@@ -10,12 +10,14 @@ use App\Fiskal\DsfinvK\DsfinvkPruefer;
 use App\Fiskal\GedruckteWerte;
 use App\Fiskal\KassenDaten;
 use App\Fiskal\KassenGedaechtnis;
+use App\Fiskal\KiLesung;
 use App\Fiskal\Rksv\RksvBeleg;
 use App\Fiskal\Rksv\RksvParser;
 use App\Fiskal\Rksv\RksvPruefer;
 use App\Forensik\ForensikPruefer;
 use App\Hashes\BelegFingerabdruck;
 use App\Muster\Ortsbestimmung;
+use App\Sprachmodell\BelegSprachmodell;
 
 /**
  * Ein Beleg → Prüfbericht. Gemeinsam genutzt von Kommandozeile und Weboberfläche.
@@ -27,6 +29,7 @@ final class BelegPruefService
         private readonly RksvPruefer $rksv = new RksvPruefer,
         private readonly DsfinvkPruefer $dsfinvk = new DsfinvkPruefer,
         private readonly KassenGedaechtnis $gedaechtnis = new KassenGedaechtnis,
+        private readonly ?BelegSprachmodell $sprachmodell = null,
     ) {}
 
     /** Erster Kassen-QR-Code im Bild: RKSV (AT) vor DSFinV-K (DE). */
@@ -77,7 +80,12 @@ final class BelegPruefService
         $text = new BelegTextAuswertung($gelesen['zeilen'] ?? [], $gelesen['alternativen'] ?? []);
         $fiskal = self::fiskalBeleg($qr);
         $kasse = self::kassenDaten($fiskal);
-        $gedruckt ??= $text->gedruckteWerte($fiskal);
+        $ki = ['genutzt' => false, 'felder' => []];
+        $kiAussteller = null;
+        if ($gedruckt === null) {
+            $gedruckt = $text->gedruckteWerte($fiskal);
+            [$gedruckt, $ki, $kiAussteller] = $this->mitSprachmodell($gedruckt, $fiskal, $gelesen, $kasse?->land ?? $text->land());
+        }
 
         $uid = $text->uid();
         $datum = $gedruckt->datumUhrzeit ?? $kasse?->zeit->format('Y-m-d H:i');
@@ -88,10 +96,13 @@ final class BelegPruefService
             'gefundene_codes' => $codes,
             'text' => $text->text(),
             'text_quelle' => $gelesen['quelle'] ?? 'ocr',
+            'zweitlesung' => $gelesen['zweitlesung'] ?? null,
             'text_sicherheit' => $gelesen['sicherheit'] ?? null,
             'uid' => $uid,
             'land' => $kasse?->land ?? $text->land(),
-            'aussteller' => $text->aussteller(),
+            'aussteller' => $kiAussteller ?? $text->aussteller(),
+            'aussteller_ocr' => $text->aussteller(),
+            'ki' => $ki,
             'ort' => (new Ortsbestimmung)->bestimme(explode("\n", $text->text()), $kasse?->land ?? $text->land()),
             'gedruckt' => [
                 'gesamt_cent' => $gedruckt->gesamtCent,
@@ -129,6 +140,98 @@ final class BelegPruefService
         }
 
         return [...$bericht, ...$ergebnis];
+    }
+
+    /**
+     * Zweite Meinung des lokalen Sprachmodells. Es liest beide Texterkennungen und liefert Summe, Datum,
+     * Steuersätze und Aussteller. Übernommen wird ein KI-Wert nur,
+     *  – wenn er im Text vorkommt (KiLesung prüft das) und
+     *  – wenn er einen fehlenden Wert ergänzt (Lesesicherheit 0,7 → höchstens Hinweis) oder
+     *    den Wert aus dem QR-Code bestätigt, wo die Texterkennung etwas anderes gelesen hat.
+     * Eine KI-Lesung, die dem QR-Code widerspricht, ersetzt nie einen Wert der Texterkennung.
+     *
+     * @return array{0: GedruckteWerte, 1: array, 2: ?string}
+     */
+    private function mitSprachmodell(GedruckteWerte $g, RksvBeleg|DsfinvkBeleg|null $fiskal, array $gelesen, ?string $land): array
+    {
+        $modell = $this->sprachmodell ?? BelegSprachmodell::ausConfig();
+        $qrSumme = $fiskal?->summeCent();
+        $qrZeit = match (true) {
+            $fiskal instanceof RksvBeleg => substr(str_replace('T', ' ', $fiskal->datumUhrzeit), 0, 16),
+            $fiskal instanceof DsfinvkBeleg => substr((string) $fiskal->endeLokal(), 0, 16),
+            default => null,
+        };
+        $qrSaetze = match (true) {
+            $fiskal instanceof RksvBeleg => array_filter($fiskal->betraegeCent),
+            $fiskal instanceof DsfinvkBeleg => array_filter($fiskal->bruttoCent ?? []),
+            default => null,
+        };
+        $datum = $g->datumUhrzeit ? substr($g->datumUhrzeit, 0, 16) : null;
+
+        $bedarf = (bool) config('belegcheck.sprachmodell.immer')
+            || $g->gesamtCent === null || $datum === null
+            || ($qrSumme !== null && $g->gesamtCent !== $qrSumme)
+            || ($qrZeit !== null && $datum !== $qrZeit)
+            || ($qrSaetze && $g->betraegeJeSatzCent !== null && array_filter($g->betraegeJeSatzCent) != $qrSaetze);
+
+        if (! $bedarf || ! $modell->verfuegbar()) {
+            return [$g, ['genutzt' => false, 'felder' => [], 'grund' => $bedarf ? 'nicht eingerichtet' : 'nicht nötig'], null];
+        }
+
+        $lesungA = (string) ($gelesen['text'] ?? '');
+        $lesungB = (string) ($gelesen['zweitlesung'] ?? '');
+        $start = microtime(true);
+        $antwort = $modell->lesen($lesungA, $lesungB);
+        $dauer = (int) round((microtime(true) - $start) * 1000);
+        if ($antwort === null) {
+            return [$g, ['genutzt' => false, 'felder' => [], 'grund' => 'keine Antwort', 'dauer_ms' => $dauer], null];
+        }
+
+        $ki = new KiLesung($antwort, $lesungA, $lesungB, $land);
+        $felder = [];
+        $sicherheit = $g->lesesicherheit;
+        $gesamt = $g->gesamtCent;
+        $betraege = $g->betraegeJeSatzCent;
+        $zeit = $g->datumUhrzeit;
+
+        $uebernehmen = function (string $feld, mixed $alt, mixed $kiWert, mixed $qrWert) use (&$felder, &$sicherheit): mixed {
+            if ($kiWert === null || $kiWert === $alt) {
+                return $alt;
+            }
+            if ($qrWert !== null && $kiWert === $qrWert) { // KI liest, was der QR-Code sagt → bestätigt
+                $felder[] = $feld;
+                $sicherheit[$feld] = max($sicherheit[$feld] ?? 0, 0.85);
+
+                return $kiWert;
+            }
+            if ($alt === null) { // Lücke füllen, aber nie als sicher
+                $felder[] = $feld;
+                $sicherheit[$feld] = KiLesung::SICHERHEIT;
+
+                return $kiWert;
+            }
+
+            return $alt;
+        };
+
+        $gesamt = $uebernehmen('gesamt', $gesamt, $ki->gesamtCent(), $qrSumme);
+        $zeitKi = $ki->datumUhrzeit();
+        $zeitNeu = $uebernehmen('datum_uhrzeit', $datum, $zeitKi, $qrZeit);
+        $zeit = $zeitNeu === $datum ? $zeit : $zeitNeu;
+        $sortiert = function (?array $a): ?array {
+            if ($a === null || ($a = array_filter($a)) === []) {
+                return null;
+            }
+            ksort($a);
+
+            return $a;
+        };
+        $betraege = $uebernehmen('betraege', $sortiert($betraege), $sortiert($ki->betraegeJeSatz()), $sortiert($qrSaetze))
+            ?? $g->betraegeJeSatzCent;
+
+        $neu = new GedruckteWerte($gesamt, $betraege, $zeit, $g->kassenId, $sicherheit, $g->tseSeriennummer);
+
+        return [$neu, ['genutzt' => true, 'felder' => $felder, 'dauer_ms' => $dauer, 'aussteller' => $ki->aussteller()], $ki->aussteller()];
     }
 
     /** Prüfer bestätigt einen gelben/roten Beleg als in Ordnung → ins Kassen-Gedächtnis. */

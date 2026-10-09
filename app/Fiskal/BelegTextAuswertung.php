@@ -21,9 +21,9 @@ final class BelegTextAuswertung
 
     private const SUMMEN_WORT = '/\b(summe|gesamt(?:betrag|summe)?|total[e]?|zu\s*zahlen|zahlbetrag|endbetrag|rechnungsbetrag|importo|montant|amount\s+due)\b/iu';
 
-    private const SATZ_FELD = ['20' => 'normal', '10' => 'ermaessigt1', '13' => 'ermaessigt2', '0' => 'null', '19' => 'besonders', '4,9' => 'besonders'];
+    public const SATZ_FELD = ['20' => 'normal', '10' => 'ermaessigt1', '13' => 'ermaessigt2', '0' => 'null', '19' => 'besonders', '4,9' => 'besonders'];
 
-    private const SATZ_FELD_DE = ['19' => 'allgemein', '7' => 'ermaessigt', '10,7' => 'durchschnitt_10_7', '5,5' => 'durchschnitt_5_5', '0' => 'null'];
+    public const SATZ_FELD_DE = ['19' => 'allgemein', '7' => 'ermaessigt', '10,7' => 'durchschnitt_10_7', '5,5' => 'durchschnitt_5_5', '0' => 'null'];
 
     /** @var list<array{text: string, sicherheit: float}> */
     private array $zeilen;
@@ -250,7 +250,8 @@ final class BelegTextAuswertung
                 }
             }
             if ($betraege !== []) {
-                $kandidaten[] = ['betraege' => $betraege, 'sicherheit' => $z['sicherheit']];
+                $kandidaten[] = ['betraege' => $betraege, 'sicherheit' => $z['sicherheit'],
+                    'endsumme' => (bool) preg_match('/(brutto|gesamt|total|zu\s*zahlen|endbetrag|summe\s+in|summe\s+eur)/iu', $z['text'])];
             }
         }
 
@@ -270,8 +271,13 @@ final class BelegTextAuswertung
             return $zahlung ? [end($zahlung['betraege']), min($zahlung['sicherheit'], self::UNSICHERE_ZUORDNUNG)] : [null, null];
         }
 
-        $wert = end($kandidaten[0]['betraege']);
-        $sicherheit = $kandidaten[0]['sicherheit'];
+        // Mehrere Summenzeilen („Summe Arbeiten“, „Summe Teile“, „Summe Brutto“): Endsumme bevorzugen,
+        // sonst den größten Betrag – Teilsummen sind nie größer als die Gesamtsumme
+        $endsummen = array_values(array_filter($kandidaten, fn ($k) => $k['endsumme']));
+        $auswahl = $endsummen !== [] ? $endsummen : $kandidaten;
+        usort($auswahl, fn ($a, $b) => end($b['betraege']) <=> end($a['betraege']));
+        $wert = end($auswahl[0]['betraege']);
+        $sicherheit = $auswahl[0]['sicherheit'];
 
         // Weicht der gelesene Betrag nur in einer Ziffer vom QR ab, ist ein Lesefehler wahrscheinlich (0↔9, 1↔7, 3↔8 …)
         if ($f && $f['summe'] !== null && self::eineZifferAnders($wert, $f['summe'])) {
