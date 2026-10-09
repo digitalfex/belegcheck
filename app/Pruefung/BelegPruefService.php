@@ -7,6 +7,7 @@ use App\Fiskal\BelegTextAuswertung;
 use App\Fiskal\GedruckteWerte;
 use App\Fiskal\Rksv\RksvParser;
 use App\Fiskal\Rksv\RksvPruefer;
+use App\Forensik\ForensikPruefer;
 use App\Hashes\BelegFingerabdruck;
 
 /**
@@ -60,12 +61,19 @@ final class BelegPruefService
                 $rksv?->belegnummer,
             ),
             'text_hash' => BelegFingerabdruck::text($text->text()),
-            ...$this->pruefeQr($qr, $gedruckt),
+            'forensik' => $gelesen['forensik'] ?? null,
+            'vorschau' => $gelesen['vorschau'] ?? [],
+            ...$this->pruefeQr($qr, $gedruckt, isset($gelesen['forensik'])
+                ? (new ForensikPruefer)->pruefe($gelesen['forensik'], $datum)
+                : []),
         ];
     }
 
     /** Prüft einen bereits gelesenen QR-Inhalt (oder null, wenn keiner gefunden wurde). */
-    public function pruefeQr(?string $qr, ?GedruckteWerte $gedruckt = null): array
+    /**
+     * @param  list<PruefErgebnis>  $zusatz  Ergebnisse weiterer Schichten (z. B. Bildforensik), fließen in den Risikowert ein
+     */
+    public function pruefeQr(?string $qr, ?GedruckteWerte $gedruckt = null, array $zusatz = []): array
     {
         if ($qr === null) {
             $ergebnisse = [new PruefErgebnis('AT-QR-01', Stufe::NichtPruefbar,
@@ -75,6 +83,7 @@ final class BelegPruefService
             ['beleg' => $beleg, 'ergebnisse' => $ergebnisse] = $this->rksv->pruefe($qr, $gedruckt);
         }
 
+        $ergebnisse = [...$ergebnisse, ...$zusatz];
         $bewertung = new Risikobewertung($ergebnisse);
 
         return [

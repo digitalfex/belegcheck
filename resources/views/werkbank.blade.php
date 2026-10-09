@@ -66,6 +66,12 @@
   details.text { margin-top: 12px; }
   details.text summary { cursor: pointer; color: var(--muted); }
   details.text pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; max-height: 320px; overflow: auto; font-size: 12px; }
+  .detailgitter { display: grid; grid-template-columns: 340px 1fr; gap: 22px; align-items: start; }
+  .original { position: sticky; top: 12px; }
+  .original img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: zoom-in; display: block; margin-bottom: 8px; }
+  .original img.gross { position: fixed; inset: 3vh auto auto 50%; transform: translateX(-50%); width: auto; max-width: 92vw; max-height: 94vh; z-index: 10; box-shadow: 0 0 0 100vmax rgba(0,0,0,.55); cursor: zoom-out; }
+  .meta { font-size: 12px; color: var(--muted); }
+  @media (max-width: 900px) { .detailgitter { grid-template-columns: 1fr; } .original { position: static; } }
   footer { color: var(--muted); font-size: 12px; margin-top: 16px; }
 </style>
 </head>
@@ -99,7 +105,7 @@
     </thead>
     <tbody id="liste"><tr><td colspan="9" class="leer">Noch keine Belege geprüft.</td></tr></tbody>
   </table>
-  <footer>Zeile anklicken für Details. Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
+  <footer>Zeile anklicken für Details mit dem Original (Bild anklicken vergrößert). Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
 </main>
 
 <script>
@@ -186,7 +192,7 @@ async function nachpruefen(b) {
   const r = await fetch('/nachpruefen', {
     method: 'POST',
     headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ qr_text: b.daten.qr_text, ...b.gedruckt }),
+    body: JSON.stringify({ qr_text: b.daten.qr_text, forensik: b.daten.forensik, ...b.gedruckt }),
   });
   const j = await r.json();
   if (r.ok) { b.daten = { ...b.daten, ...j }; zeichnen(); }
@@ -303,7 +309,14 @@ function detail(b) {
       <button class="primary" onclick="gedrucktPruefen(${b.id})">Mit Gedrucktem vergleichen</button>
     </div>
     <div class="qrroh mono">QR-Inhalt: ${esc(d.qr_text)}</div>` : '';
-  return `<tr class="detail"><td colspan="9"><div class="ergebnis">${ergebnisse}</div>${vergleich}${textBlock}</td></tr>`;
+  const bilder = (d.vorschau || []).map((v, i) =>
+    `<img src="data:image/jpeg;base64,${v}" alt="Seite ${i + 1}" onclick="event.stopPropagation(); this.classList.toggle('gross')" title="Klicken zum Vergrößern">`).join('');
+  const f = d.forensik?.metadaten || {};
+  const meta = d.forensik ? `<div class="meta">Datei: ${esc([f.hersteller, f.modell].filter(Boolean).join(' ') || 'keine Kameraangaben')}${f.software ? ' · Software: ' + esc(f.software) : ''}${f.aufnahme ? ' · Aufnahme: ' + esc(f.aufnahme) : ''}</div>` : '';
+  return `<tr class="detail"><td colspan="9"><div class="detailgitter">
+    <div class="original">${bilder || '<div class="leer">keine Vorschau</div>'}${meta}</div>
+    <div><div class="ergebnis">${ergebnisse}</div>${vergleich}${textBlock}</div>
+  </div></td></tr>`;
 }
 
 window.umschalten = id => { offen = offen === id ? null : id; zeichnen(); };

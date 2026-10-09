@@ -104,3 +104,35 @@ def test_textschicht_nur_bei_pdf():
     from app import pdf_textschicht
 
     assert pdf_textschicht(_bon(INHALT)) is None
+
+
+# ---------- Bildforensik ----------
+
+def _jpeg_mit_exif(software=None, extra=b"") -> bytes:
+    bild = Image.open(io.BytesIO(thermobon()))
+    exif = Image.Exif()
+    exif[0x010F] = "Apple"
+    exif[0x0110] = "iPhone 15"
+    if software:
+        exif[0x0131] = software
+    puffer = io.BytesIO()
+    bild.save(puffer, format="JPEG", exif=exif.tobytes())
+    return puffer.getvalue() + extra
+
+
+def test_forensik_unauffaelliges_handyfoto():
+    j = client.post("/lesen", files={"datei": ("bon.jpg", _jpeg_mit_exif("18.6"), "image/jpeg")}).json()
+    assert j["forensik"]["ki_kennzeichen"] == []
+    assert j["forensik"]["bearbeitungssoftware"] == []
+    assert j["forensik"]["metadaten"]["modell"] == "iPhone 15"
+
+
+def test_forensik_photoshop():
+    j = client.post("/lesen", files={"datei": ("bon.jpg", _jpeg_mit_exif("Adobe Photoshop 26.1 (Windows)"), "image/jpeg")}).json()
+    assert j["forensik"]["bearbeitungssoftware"] == ["photoshop"]
+
+
+def test_forensik_ki_herkunft():
+    xmp = b'<x:xmpmeta><Iptc4xmpExt:DigitalSourceType>http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia</Iptc4xmpExt:DigitalSourceType></x:xmpmeta>'
+    j = client.post("/lesen", files={"datei": ("bon.jpg", _jpeg_mit_exif(extra=xmp), "image/jpeg")}).json()
+    assert "IPTC-Herkunftsangabe „KI-erzeugt“" in j["forensik"]["ki_kennzeichen"]

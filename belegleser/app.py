@@ -51,6 +51,68 @@ def pdf_textschicht(daten: bytes) -> list[str] | None:
     return texte if sum(len(t.strip()) for t in texte) > 30 else None
 
 
+# ---------- Bildforensik (Schicht 4, Basis) ----------
+
+# Kennzeichnungen, mit denen KI-Bildgeneratoren ihre Bilder markieren (Metadaten, nicht Pixel)
+KI_KENNUNGEN = {
+    b"trainedAlgorithmicMedia": "IPTC-Herkunftsangabe „KI-erzeugt“",
+    b"compositeWithTrainedAlgorithmicMedia": "IPTC-Herkunftsangabe „mit KI bearbeitet“",
+    b"c2pa": "C2PA-Herkunftsnachweis (Content Credentials)",
+    b"Stable Diffusion": "Stable-Diffusion-Parameter",
+    b"\"prompt\"": "Generierungs-Prompt in den Metadaten",
+    b"Midjourney": "Midjourney-Kennung",
+    b"DALL-E": "DALL-E-Kennung",
+    b"Firefly": "Adobe-Firefly-Kennung",
+    b"Imagen": "Google-Imagen-Kennung",
+}
+
+BEARBEITUNGS_SOFTWARE = ("photoshop", "gimp", "affinity", "pixelmator", "canva", "paint.net", "lightroom",
+                         "picsart", "fotor", "photopea", "illustrator", "inkscape", "krita")
+
+
+def vorschau(bild: Image.Image, max_hoehe: int = 1600) -> str:
+    """Originalansicht für die Werkbank (JPEG, base64) – funktioniert auch für HEIC und PDF."""
+    import base64
+
+    kopie = bild.convert("RGB")
+    kopie.thumbnail((1000, max_hoehe))
+    puffer = io.BytesIO()
+    kopie.save(puffer, format="JPEG", quality=82)
+    return base64.b64encode(puffer.getvalue()).decode()
+
+
+def forensik(daten: bytes, bilder: list[Image.Image]) -> dict:
+    """Metadaten-Prüfung. Bewusst nur Merkmale mit wenig Fehlalarmen; fehlende Metadaten sind kein Signal."""
+    ki = sorted({text for kennung, text in KI_KENNUNGEN.items() if kennung in daten})
+    # C2PA allein bedeutet nicht KI (auch Kameras signieren) – nur zusammen mit KI-Herkunft werten
+    if ki == ["C2PA-Herkunftsnachweis (Content Credentials)"]:
+        ki = []
+
+    exif: dict = {}
+    software = None
+    if bilder and daten[:4] != b"%PDF":
+        roh = bilder[0].getexif()
+        if roh:
+            unter = roh.get_ifd(0x8769)  # Exif-IFD
+            exif = {
+                "hersteller": roh.get(0x010F),
+                "modell": roh.get(0x0110),
+                "software": roh.get(0x0131),
+                "aufnahme": unter.get(0x9003) or roh.get(0x0132),  # DateTimeOriginal, sonst DateTime
+            }
+            exif = {k: str(v).strip("\x00 ").strip() for k, v in exif.items() if v}
+            software = exif.get("software")
+    elif daten[:4] == b"%PDF":
+        import pypdfium2 as pdfium
+
+        meta = pdfium.PdfDocument(daten).get_metadata_dict()
+        software = " / ".join(v for k, v in meta.items() if k in ("Creator", "Producer") and v) or None
+        exif = {"software": software} if software else {}
+
+    bearbeitung = [s for s in BEARBEITUNGS_SOFTWARE if software and s in software.lower()]
+    return {"ki_kennzeichen": ki, "metadaten": exif, "bearbeitungssoftware": bearbeitung}
+
+
 def _varianten(bild: Image.Image):
     """Mehrere Aufbereitungen, weil Thermopapier oft blass oder verzogen ist."""
     grau = bild.convert("L")
@@ -180,4 +242,6 @@ async def lesen(datei: UploadFile = File(...)) -> dict:
         "zeilen": [z for s in seiten for z in s["zeilen"]],
         "sicherheit": round(sum(s["sicherheit"] for s in seiten) / len(seiten), 2) if seiten else 0.0,
         "quelle": "pdf-text" if textschicht is not None else "ocr",
+        "forensik": forensik(daten, bilder),
+        "vorschau": [vorschau(b) for b in bilder[:3]],
     }

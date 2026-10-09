@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Fiskal\GedruckteWerte;
+use App\Forensik\ForensikPruefer;
 use App\Pruefung\BelegPruefService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -46,6 +47,7 @@ class PruefController extends Controller
             'gesamt' => ['nullable', 'string', 'max:20'],
             'datum_uhrzeit' => ['nullable', 'string', 'max:20'],
             'kassen_id' => ['nullable', 'string', 'max:100'],
+            'forensik' => ['nullable', 'array'],
         ]);
 
         $gedruckt = new GedruckteWerte(
@@ -54,7 +56,12 @@ class PruefController extends Controller
             kassenId: ($daten['kassen_id'] ?? '') !== '' ? $daten['kassen_id'] : null,
         );
 
-        return response()->json($service->pruefeQr($daten['qr_text'] ?? null, $gedruckt));
+        // Ergebnisse der Bildforensik bleiben beim Nachprüfen erhalten
+        $zusatz = isset($daten['forensik'])
+            ? (new ForensikPruefer)->pruefe($daten['forensik'], $gedruckt->datumUhrzeit)
+            : [];
+
+        return response()->json($service->pruefeQr($daten['qr_text'] ?? null, $gedruckt, $zusatz));
     }
 
     /** "92,60" / "92.60" / "1.092,60" → Cent */
