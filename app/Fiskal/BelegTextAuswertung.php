@@ -31,7 +31,10 @@ final class BelegTextAuswertung
     /**
      * @param  list<array{text: string, sicherheit: float}>  $zeilen  aus dem Belegleser
      */
-    public function __construct(array $zeilen)
+    /**
+     * @param  list<array{text: string, sicherheit: float}>  $alternativen  Zeilen weiterer Lesevarianten (andere Bildaufbereitung)
+     */
+    public function __construct(array $zeilen, private readonly array $alternativen = [])
     {
         $this->zeilen = array_values(array_filter($zeilen, fn ($z) => trim($z['text']) !== ''));
     }
@@ -50,15 +53,43 @@ final class BelegTextAuswertung
     public function gedruckteWerte(RksvBeleg|DsfinvkBeleg|null $qr = null): GedruckteWerte
     {
         $f = self::fuehrung($qr);
-        $sicherheit = [];
+        $w = $this->felder($f);
 
-        [$gesamt, $sicherheit['gesamt']] = $this->gesamt($f);
-        [$betraege, $sicherheit['betraege']] = $this->betraegeJeSatz($f);
-        [$datum, $sicherheit['datum_uhrzeit']] = $this->datumUhrzeit($f);
-        [$kasse, $sicherheit['kassen_id']] = $this->kassenId($f);
-        [$tse, $sicherheit['tse']] = $this->tseSeriennummer();
+        // Weicht ein Feld vom QR-Code ab, aber eine andere Lesevariante hat den QR-Wert gelesen,
+        // war es ein Lesefehler → Wert der anderen Variante übernehmen.
+        if ($f && $this->alternativen !== []) {
+            $alt = (new self($this->alternativen))->felder($f);
+            $soll = [
+                'gesamt' => $f['summe'],
+                'betraege' => array_filter($f['betraege']),
+                'datum_uhrzeit' => $f['zeit'] ? substr(str_replace('T', ' ', $f['zeit']), 0, 16) : null,
+                'kassen_id' => $f['kasse'],
+                'tse' => $f['tse'],
+            ];
+            foreach ($soll as $feld => $wert) {
+                $istPrimaer = $feld === 'betraege' && $w[$feld][0] !== null ? array_filter($w[$feld][0]) : $w[$feld][0];
+                $istAlt = $feld === 'betraege' && $alt[$feld][0] !== null ? array_filter($alt[$feld][0]) : $alt[$feld][0];
+                if ($wert !== null && $istPrimaer !== $wert && $istAlt === $wert) {
+                    $w[$feld] = $alt[$feld];
+                }
+            }
+        }
 
-        return new GedruckteWerte($gesamt, $betraege, $datum, $kasse, array_filter($sicherheit, fn ($s) => $s !== null), $tse);
+        $sicherheit = array_filter(array_map(fn ($x) => $x[1], $w), fn ($s) => $s !== null);
+
+        return new GedruckteWerte($w['gesamt'][0], $w['betraege'][0], $w['datum_uhrzeit'][0], $w['kassen_id'][0], $sicherheit, $w['tse'][0]);
+    }
+
+    /** @return array<string, array{0: mixed, 1: ?float}> */
+    private function felder(?array $f): array
+    {
+        return [
+            'gesamt' => $this->gesamt($f),
+            'betraege' => $this->betraegeJeSatz($f),
+            'datum_uhrzeit' => $this->datumUhrzeit($f),
+            'kassen_id' => $this->kassenId($f),
+            'tse' => $this->tseSeriennummer(),
+        ];
     }
 
     /**
@@ -71,11 +102,11 @@ final class BelegTextAuswertung
         return match (true) {
             $qr instanceof RksvBeleg => [
                 'summe' => $qr->summeCent(), 'betraege' => $qr->betraegeCent, 'satz_feld' => self::SATZ_FELD,
-                'zeit' => $qr->datumUhrzeit, 'kasse' => $qr->kassenId,
+                'zeit' => $qr->datumUhrzeit, 'kasse' => $qr->kassenId, 'tse' => null,
             ],
             $qr instanceof DsfinvkBeleg => [
                 'summe' => $qr->summeCent(), 'betraege' => $qr->bruttoCent ?? [], 'satz_feld' => self::SATZ_FELD_DE,
-                'zeit' => $qr->endeLokal(), 'kasse' => $qr->kassenSeriennummer,
+                'zeit' => $qr->endeLokal(), 'kasse' => $qr->kassenSeriennummer, 'tse' => $qr->tseSeriennummer(),
             ],
             default => null,
         };
@@ -340,6 +371,7 @@ final class BelegTextAuswertung
     /** Alle Geldbeträge einer Zeile in Cent, z. B. "2 x Schnitzel 37,80" → [3780]. */
     public static function betraege(string $text): array
     {
+        $text = self::zahlenGlaetten($text);
         preg_match_all('/(?<![\d,.])-?\d{1,3}(?:\.\d{3})*,\d{2}(?![\d,])|(?<![\d,.])-?\d+\.\d{2}(?![\d.])/u', $text, $m);
 
         return array_map(function ($b) {
@@ -347,6 +379,21 @@ final class BelegTextAuswertung
 
             return (int) round((float) $b * 100);
         }, $m[0]);
+    }
+
+    /**
+     * Typische Lesefehler in Zahlen ausgleichen: O/o→0, l/I/|→1, S→5, B→8 – nur direkt neben Ziffern;
+     * „70, 70“ oder „70 ,70“ → „70,70“.
+     */
+    public static function zahlenGlaetten(string $text): string
+    {
+        $ersatz = ['O' => '0', 'o' => '0', 'D' => '0', 'l' => '1', 'I' => '1', '|' => '1', 'S' => '5', 'B' => '8'];
+        for ($i = 0; $i < 2; $i++) { // zweimal, damit auch „7OO,O0“ ganz korrigiert wird
+            $text = preg_replace_callback('/(?<=[\d,.])[OoDlI|SB]|(?<=^|\s)[OoDlI|SB](?=\d*[,.]\d)/u',
+                fn ($m) => $ersatz[$m[0]], $text);
+        }
+
+        return preg_replace('/(\d)\s*([,.])\s+(\d{2})(?!\d)/u', '$1$2$3', preg_replace('/(\d)\s+([,.])(\d{2})(?!\d)/u', '$1$2$3', $text));
     }
 
     private static function norm(string $s): string

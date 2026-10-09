@@ -74,7 +74,7 @@ final class BelegPruefService
         $codes = $gelesen['codes'] ?? [];
         $qr = self::kassenQr($codes);
 
-        $text = new BelegTextAuswertung($gelesen['zeilen'] ?? []);
+        $text = new BelegTextAuswertung($gelesen['zeilen'] ?? [], $gelesen['alternativen'] ?? []);
         $fiskal = self::fiskalBeleg($qr);
         $kasse = self::kassenDaten($fiskal);
         $gedruckt ??= $text->gedruckteWerte($fiskal);

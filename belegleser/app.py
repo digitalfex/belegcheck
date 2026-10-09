@@ -152,23 +152,39 @@ def _schraeglage(grau: Image.Image) -> float:
     return bester
 
 
-def _fuer_ocr(bild: Image.Image) -> Image.Image:
-    """Bon-Fotos für Tesseract aufbereiten: Graustufen, gerade drehen, auf ~1800 px Höhe bringen, Kontrast."""
+def _gerade(bild: Image.Image) -> Image.Image:
+    """Graustufen, Kontrast, Schräglage korrigieren."""
     grau = ImageOps.autocontrast(bild.convert("L"), cutoff=1)
     winkel = _schraeglage(grau)
     if abs(winkel) >= 0.5:
         grau = grau.rotate(winkel, resample=Image.BICUBIC, expand=True, fillcolor=255)
-    if grau.height < 1800:
-        faktor = 1800 / grau.height
-        grau = grau.resize((int(grau.width * faktor), 1800), Image.LANCZOS)
     return grau
 
 
-def text_lesen(bild: Image.Image) -> dict:
-    """Texterkennung mit Zeilen und Lesesicherheit (0..1) je Zeile."""
-    daten = pytesseract.image_to_data(
-        _fuer_ocr(bild), lang="deu+eng", config="--psm 4", output_type=pytesseract.Output.DICT
-    )
+def _auf_hoehe(grau: Image.Image, hoehe: int) -> Image.Image:
+    if grau.height < hoehe:
+        faktor = hoehe / grau.height
+        grau = grau.resize((int(grau.width * faktor), hoehe), Image.LANCZOS)
+    return grau
+
+
+def _ocr_varianten(bild: Image.Image):
+    """Drei Aufbereitungen – Thermopapier ist oft blass, ungleichmäßig belichtet oder klein fotografiert."""
+    from PIL import ImageChops, ImageFilter
+
+    grau = _gerade(bild)
+    # A: Standard
+    yield "standard", _auf_hoehe(grau, 1800)
+    # B: lokale Schwelle gegen ungleichmäßige Beleuchtung und Schatten
+    hintergrund = grau.filter(ImageFilter.GaussianBlur(25))
+    differenz = ImageChops.subtract(hintergrund, grau)  # Text = dunkler als Umgebung
+    yield "schwelle", _auf_hoehe(differenz.point(lambda p: 0 if p > 18 else 255), 1800)
+    # C: größer und geschärft für kleine oder unscharfe Schrift
+    yield "gross", _auf_hoehe(grau, 2600).filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+
+
+def _ocr(bild: Image.Image) -> list[dict]:
+    daten = pytesseract.image_to_data(bild, lang="deu+eng", config="--psm 4", output_type=pytesseract.Output.DICT)
     zeilen: dict[tuple, dict] = {}
     for i, wort in enumerate(daten["text"]):
         wort = wort.strip()
@@ -179,13 +195,42 @@ def text_lesen(bild: Image.Image) -> dict:
         z = zeilen.setdefault(schluessel, {"woerter": [], "conf": []})
         z["woerter"].append(wort)
         z["conf"].append(conf)
-
-    ergebnis = [
+    return [
         {"text": " ".join(z["woerter"]), "sicherheit": round(sum(z["conf"]) / len(z["conf"]) / 100, 2)}
         for z in zeilen.values()
     ]
-    gesamt = round(sum(z["sicherheit"] for z in ergebnis) / len(ergebnis), 2) if ergebnis else 0.0
-    return {"text": "\n".join(z["text"] for z in ergebnis), "zeilen": ergebnis, "sicherheit": gesamt}
+
+
+def text_lesen(bild: Image.Image) -> dict:
+    """
+    Texterkennung in mehreren Varianten. Hauptergebnis = Variante mit der höchsten Lesesicherheit;
+    die anderen Varianten werden als „alternativen“ mitgeliefert, damit die Prüfung einen QR-Wert
+    bestätigen kann, wenn er in irgendeiner Variante richtig gelesen wurde.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    varianten = list(_ocr_varianten(bild))
+    # Tesseract läuft als eigener Prozess je Variante → parallel
+    with ThreadPoolExecutor(max_workers=len(varianten)) as pool:
+        ergebnisse = list(pool.map(lambda v: (v[0], _ocr(v[1])), varianten))
+
+    laeufe = []
+    for name, zeilen in ergebnisse:
+        if zeilen:
+            schnitt = sum(z["sicherheit"] for z in zeilen) / len(zeilen)
+            laeufe.append((schnitt, name, zeilen))
+    if not laeufe:
+        return {"text": "", "zeilen": [], "sicherheit": 0.0, "alternativen": [], "variante": None}
+
+    laeufe.sort(key=lambda l: l[0], reverse=True)
+    beste = laeufe[0]
+    return {
+        "text": "\n".join(z["text"] for z in beste[2]),
+        "zeilen": beste[2],
+        "sicherheit": round(beste[0], 2),
+        "variante": beste[1],
+        "alternativen": [z for _, _, zeilen in laeufe[1:] for z in zeilen],
+    }
 
 
 @app.get("/gesund")
@@ -240,6 +285,7 @@ async def lesen(datei: UploadFile = File(...)) -> dict:
         "seiten": len(bilder),
         "text": "\n".join(s["text"] for s in seiten),
         "zeilen": [z for s in seiten for z in s["zeilen"]],
+        "alternativen": [z for s in seiten for z in s.get("alternativen", [])],
         "sicherheit": round(sum(s["sicherheit"] for s in seiten) / len(seiten), 2) if seiten else 0.0,
         "quelle": "pdf-text" if textschicht is not None else "ocr",
         "forensik": forensik(daten, bilder),

@@ -108,4 +108,26 @@ class BelegTextAuswertungTest extends TestCase
         $this->assertSame(1200, $g->gesamtCent);
         $this->assertSame('2026-10-07 13:05', $g->datumUhrzeit);
     }
+
+    public function test_typische_ziffern_lesefehler(): void
+    {
+        $this->assertSame([7070], BelegTextAuswertung::betraege('SUMME EUR 7O,70'));
+        $this->assertSame([7070], BelegTextAuswertung::betraege('Summe 70, 70'));
+        $this->assertSame([11350], BelegTextAuswertung::betraege('Bar 1l3,5O'));
+        $this->assertSame('SUMME EUR', BelegTextAuswertung::zahlenGlaetten('SUMME EUR'));
+    }
+
+    public function test_andere_lesevariante_bestaetigt_qr_wert(): void
+    {
+        // Hauptvariante liest 79,70 (Lesefehler), zweite Bildaufbereitung liest richtig 70,70
+        $primaer = [['text' => 'SUMME EUR 79,70', 'sicherheit' => 0.95], ['text' => '08.10.2026 19:42', 'sicherheit' => 0.95]];
+        $alternativ = [['text' => 'SUMME EUR 70,70', 'sicherheit' => 0.88]];
+
+        $g = (new BelegTextAuswertung($primaer, $alternativ))->gedruckteWerte($this->qr());
+        $this->assertSame(7070, $g->gesamtCent);
+
+        // Ohne bestätigende Variante bleibt die Abweichung stehen
+        $g = (new BelegTextAuswertung($primaer, [['text' => 'SUMME EUR 79,70', 'sicherheit' => 0.9]]))->gedruckteWerte($this->qr());
+        $this->assertSame(7970, $g->gesamtCent);
+    }
 }
