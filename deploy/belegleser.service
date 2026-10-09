@@ -1,0 +1,19 @@
+[Unit]
+Description=Belegleser (Beleg-Check, interner QR-/Texterkennungsdienst)
+After=network.target
+
+[Service]
+User=belegcheck
+Group=belegcheck
+WorkingDirectory=/srv/belegcheck/belegleser
+ExecStart=/srv/belegcheck/belegleser/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8090 --workers 2
+Restart=on-failure
+RestartSec=5
+# Härtung: Dienst darf nur sein eigenes Verzeichnis lesen, nichts schreiben
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
