@@ -22,6 +22,12 @@ final class PruefErgebnis
         return new self($code, Stufe::Ok, $begruendung);
     }
 
+    /** Gegenstück zu toArray() */
+    public static function ausArray(array $e): self
+    {
+        return new self($e['code'], Stufe::from($e['stufe']), $e['begruendung'] ?? '', $e['werte'] ?? []);
+    }
+
     public function toArray(): array
     {
         return [

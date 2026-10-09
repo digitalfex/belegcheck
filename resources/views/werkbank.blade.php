@@ -393,7 +393,10 @@ function detail(b) {
   const kiZeile = d.ki?.genutzt
     ? `<p class="begruendung">Sprachmodell (lokal, ${Math.round((d.ki.dauer_ms ?? 0) / 1000)} s): ${d.ki.felder.length ? 'übernommen: ' + d.ki.felder.map(f => FELD[f] ?? f).join(', ') : 'keine Werte übernommen'}${d.aussteller_ocr && d.aussteller !== d.aussteller_ocr ? ` · Aussteller statt „${esc(d.aussteller_ocr)}“` : ''}</p>`
     : '';
-  const textBlock = kiZeile + (d.text ? `<details class="text" onclick="event.stopPropagation()"><summary>Erkannter Text (${d.text_quelle === 'pdf-text' ? 'aus PDF' : 'Texterkennung, Sicherheit ' + Math.round((d.text_sicherheit ?? 0) * 100) + ' %'}${d.uid ? ', UID ' + esc(d.uid) : ''})</summary><pre>${esc(d.text)}</pre></details>` : '')
+  const EMPF = { automatisch_freigeben: 'automatisch freigeben', stichprobe: 'Stichprobe', manuell_pruefen: 'manuell prüfen' };
+  const lokal = d.aussteller_pruefung?.osm?.gefunden ? ` · Lokal: ${esc(d.aussteller_pruefung.osm.name)}` : '';
+  const urteilZeile = d.urteil ? `<p class="begruendung">Score ${d.urteil.score} · Abdeckung ${Math.round(d.urteil.abdeckung * 100)} % · Empfehlung: ${EMPF[d.urteil.empfehlung] ?? d.urteil.empfehlung}${d.aussteller_pruefung?.branche ? ' · Branche: ' + esc(d.aussteller_pruefung.branche) : ''}${lokal}</p>` : '';
+  const textBlock = urteilZeile + kiZeile + (d.text ? `<details class="text" onclick="event.stopPropagation()"><summary>Erkannter Text (${d.text_quelle === 'pdf-text' ? 'aus PDF' : 'Texterkennung, Sicherheit ' + Math.round((d.text_sicherheit ?? 0) * 100) + ' %'}${d.uid ? ', UID ' + esc(d.uid) : ''})</summary><pre>${esc(d.text)}</pre></details>` : '')
     + (d.zweitlesung ? `<details class="text" onclick="event.stopPropagation()"><summary>Gegenlesung (Tesseract)</summary><pre>${esc(d.zweitlesung)}</pre></details>` : '');
   const vergleich = d.qr ? `
     <div class="vergleich" onclick="event.stopPropagation()">

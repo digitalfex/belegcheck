@@ -457,6 +457,7 @@ final class BelegTextAuswertung
                 return true;
             }
         }
+
         // „unklar“ kann auch der Nettobetrag sein
         return $t['unklar'] !== null && abs($t['unklar'] - ($brutto - $steuer)) <= 2;
     }

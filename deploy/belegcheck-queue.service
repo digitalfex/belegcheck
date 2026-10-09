@@ -1,0 +1,17 @@
+[Unit]
+Description=Beleg-Check Hintergrundarbeit (asynchrone Prüfungen, Webhooks)
+After=network.target postgresql.service belegleser.service
+
+[Service]
+User=belegcheck
+Group=belegcheck
+WorkingDirectory=/srv/belegcheck/app
+ExecStart=/usr/bin/php artisan queue:work --sleep=2 --tries=3 --timeout=600 --max-time=3600
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

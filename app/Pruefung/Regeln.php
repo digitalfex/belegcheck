@@ -51,11 +51,29 @@ final class Regeln
 
         // Schicht 3: Muster über mehrere Belege
         'MU-OZ-01' => 'Orte und Zeiten der Belege einer Person sind vereinbar',
+        'MU-DU-01' => 'Datei nicht schon einmal eingereicht',
+        'MU-DU-02' => 'Beleg (Aussteller, Zeit, Betrag bzw. Kassenbeleg) nicht schon einmal eingereicht',
+        'MU-DU-03' => 'Kein sehr ähnlicher Beleg bereits eingereicht',
 
         // Schicht 4: Bildforensik (Metadaten)
         'BF-01' => 'Keine KI-Herkunftskennzeichnung in der Datei',
         'BF-02' => 'Kein Bildbearbeitungsprogramm in den Metadaten',
         'BF-03' => 'Foto nach Ausstellung des Belegs aufgenommen',
+
+        // Abgleich mit den Angaben der Spesenabrechnung (über die Schnittstelle mitgeschickt)
+        'EA-01' => 'Eingereichter Betrag nicht höher als die Belegsumme',
+        'EA-02' => 'Eingereichtes Datum = Belegdatum',
+
+        // Schicht 2: Aussteller-Screening
+        'AS-01' => 'UID des Ausstellers gültig (EU-Register VIES)',
+        'AS-02' => 'Name zur UID passt zum Beleg',
+        'AS-03' => 'Lokal/Geschäft am Ort auffindbar (OpenStreetMap)',
+        'AS-04' => 'Beleg innerhalb der Öffnungszeiten',
+
+        // Branche und Compliance
+        'BR-01' => 'Branche des Ausstellers passt zur Spesenkategorie',
+        'CO-01' => 'Aussteller in keiner vom Unternehmen ausgeschlossenen Kategorie',
+        'CO-02' => 'Keine ausgeschlossenen Positionen auf dem Beleg',
     ];
 
     public static function titel(string $code): string

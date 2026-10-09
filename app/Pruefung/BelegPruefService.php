@@ -17,6 +17,7 @@ use App\Fiskal\Rksv\RksvPruefer;
 use App\Forensik\ForensikPruefer;
 use App\Hashes\BelegFingerabdruck;
 use App\Muster\Ortsbestimmung;
+use App\Screening\AusstellerPruefer;
 use App\Sprachmodell\BelegSprachmodell;
 
 /**
@@ -30,6 +31,7 @@ final class BelegPruefService
         private readonly DsfinvkPruefer $dsfinvk = new DsfinvkPruefer,
         private readonly KassenGedaechtnis $gedaechtnis = new KassenGedaechtnis,
         private readonly ?BelegSprachmodell $sprachmodell = null,
+        private readonly ?AusstellerPruefer $ausstellerPruefer = null,
     ) {}
 
     /** Erster Kassen-QR-Code im Bild: RKSV (AT) vor DSFinV-K (DE). */
@@ -70,8 +72,11 @@ final class BelegPruefService
     /**
      * Prüft eine Datei (Foto/PDF): QR-Code und Text lesen, gedruckte Werte automatisch ermitteln.
      * Von Hand übergebene gedruckte Werte haben Vorrang vor der Texterkennung.
+     *
+     * @param  array{angaben?: array{betrag?: mixed, datum?: ?string, kategorie?: ?string}, screening?: bool,
+     *     richtlinie?: array<string, string>, schwellen?: array}  $kontext  Angaben aus dem ERP und Einstellungen des Mandanten
      */
-    public function pruefeDatei(string $pfad, ?GedruckteWerte $gedruckt = null): array
+    public function pruefeDatei(string $pfad, ?GedruckteWerte $gedruckt = null, array $kontext = []): array
     {
         $gelesen = ($this->leser ?? BelegleserClient::ausConfig())->lesen($pfad);
         $codes = $gelesen['codes'] ?? [];
@@ -125,12 +130,36 @@ final class BelegPruefService
             'vorschau' => $gelesen['vorschau'] ?? [],
         ];
 
+        $angaben = $kontext['angaben'] ?? [];
+        $aussteller = ($this->ausstellerPruefer ?? new AusstellerPruefer)->pruefe([
+            'uid' => $uid,
+            'aussteller' => $bericht['aussteller'],
+            'text' => $text->text(),
+            'zweitlesung' => (string) ($gelesen['zweitlesung'] ?? ''),
+            'zeilen' => explode("\n", $text->text()),
+            'ort' => $bericht['ort'],
+            'zeitpunkt' => $datum,
+            'kategorie' => $angaben['kategorie'] ?? null,
+        ], (bool) ($kontext['screening'] ?? config('belegcheck.screening.aktiv')), $kontext['richtlinie'] ?? []);
+        $bericht['aussteller_pruefung'] = $aussteller['daten'];
+
+        $belegCent = $gedruckt->gesamtCent ?? $kasse?->summeCent;
         $zusatz = [
             ...(isset($gelesen['forensik']) ? (new ForensikPruefer)->pruefe($gelesen['forensik'], $datum) : []),
             ...($kasse ? $this->gedaechtnis->pruefe($kasse, $uid, $text->aussteller(), $dateiSha) : []),
+            ...$aussteller['ergebnisse'],
+            ...(new AngabenAbgleich)->pruefe($angaben, $belegCent,
+                $kasse?->summeCent !== null ? $belegCent === $kasse->summeCent || $gedruckt->sicher('gesamt') : $gedruckt->sicher('gesamt'), $datum),
         ];
 
         $ergebnis = $this->pruefeQr($qr, $gedruckt, $zusatz, $bericht['land'], $text->tseKlartext());
+        $urteil = new Gesamturteil([...$bericht, ...$ergebnis]);
+        $ergebnis['urteil'] = [
+            'score' => $urteil->score(),
+            'abdeckung' => $urteil->abdeckung(),
+            'bereiche' => $urteil->bereiche(),
+            'empfehlung' => $urteil->empfehlung($kontext['schwellen'] ?? []),
+        ];
 
         // Gedächtnis lernt automatisch nur aus grünen Belegen; gelbe/rote erst nach Bestätigung durch den Prüfer
         $ergebnis['im_gedaechtnis'] = false;
