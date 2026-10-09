@@ -63,8 +63,8 @@ class BelegPruefen extends Command
         }
 
         $this->info('Prüfergebnisse');
-        $this->table(['Code', 'Stufe', 'Begründung'], array_map(
-            fn (array $e) => [$e['code'], $e['stufe'], wordwrap($e['begruendung'], 90)],
+        $this->table(['Code', 'Prüfung', 'Stufe', 'Begründung'], array_map(
+            fn (array $e) => [$e['code'], wordwrap($e['titel'], 40), $e['stufe'], wordwrap($e['begruendung'], 70)],
             $ergebnisse,
         ));
 

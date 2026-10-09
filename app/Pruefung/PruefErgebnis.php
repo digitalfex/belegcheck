@@ -26,6 +26,7 @@ final class PruefErgebnis
     {
         return [
             'code' => $this->code,
+            'titel' => Regeln::titel($this->code),
             'stufe' => $this->stufe->value,
             'punkte' => $this->stufe->punkte(),
             'begruendung' => $this->begruendung,

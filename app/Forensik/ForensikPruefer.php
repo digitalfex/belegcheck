@@ -25,7 +25,7 @@ final class ForensikPruefer
         // BF-01: KI-Herkunftskennzeichnung
         $ki = $f['ki_kennzeichen'] ?? [];
         $out[] = $ki === []
-            ? PruefErgebnis::ok('BF-01', 'Keine KI-Herkunftskennzeichnung in der Datei.')
+            ? PruefErgebnis::ok('BF-01')
             : new PruefErgebnis('BF-01', Stufe::Widerspruch,
                 'Die Bilddatei enthält eine Kennzeichnung, die sie als von einem KI-Bildgenerator erzeugt oder bearbeitet ausweist ('.implode(', ', $ki).'). Original-Beleg in Papierform anfordern.',
                 ['kennzeichen' => $ki]);
@@ -33,7 +33,7 @@ final class ForensikPruefer
         // BF-02: Bildbearbeitungsprogramm
         $software = $f['bearbeitungssoftware'] ?? [];
         $out[] = $software === []
-            ? PruefErgebnis::ok('BF-02', 'Kein Bildbearbeitungsprogramm in den Metadaten.')
+            ? PruefErgebnis::ok('BF-02')
             : new PruefErgebnis('BF-02', Stufe::Auffaellig,
                 sprintf('Laut Metadaten wurde die Datei mit „%s“ gespeichert. Das kann harmlos sein (z. B. Zuschneiden), aber auch auf eine Bearbeitung hinweisen. Original-Beleg ansehen.', $meta['software'] ?? implode(', ', $software)),
                 ['software' => $meta['software'] ?? null]);
@@ -65,6 +65,6 @@ final class ForensikPruefer
                 ['aufnahme' => $foto->format(DATE_ATOM), 'beleg' => $belegDatum]);
         }
 
-        return PruefErgebnis::ok('BF-03', 'Foto nach Ausstellung des Belegs aufgenommen.');
+        return PruefErgebnis::ok('BF-03');
     }
 }

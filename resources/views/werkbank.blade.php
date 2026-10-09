@@ -79,6 +79,9 @@
   #lupe img.breit { width: min(1400px, 98vw); cursor: zoom-out; }
   #lupe .zu { position: fixed; top: 14px; right: 20px; background: #fff; border: 0; border-radius: 999px; width: 36px; height: 36px; font-size: 18px; }
   #lupe .tipp { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); color: #fff; background: rgba(0,0,0,.7); padding: 4px 12px; border-radius: 999px; font-size: 12px; }
+  .regel { font-weight: 500; }
+  .begruendung { color: var(--muted); margin-top: 1px; }
+  .stufe-widerspruch ~ div .begruendung, .stufe-auffaellig ~ div .begruendung { color: var(--ink); }
   .gemerkt { color: var(--gruen); font-size: 13px; align-self: center; }
   .meta { font-size: 12px; color: var(--muted); }
   @media (max-width: 900px) { .detailgitter { grid-template-columns: 1fr; } .original { position: static; } }
@@ -347,10 +350,11 @@ function detail(b) {
   const d = b.daten;
   const RANG = { widerspruch: 0, auffaellig: 1, hinweis: 2, nicht_pruefbar: 3, ok: 4 };
   const sortiert = [...d.ergebnisse].sort((a, b) => RANG[a.stufe] - RANG[b.stufe]);
+  const STUFE_TEXT = { ok: 'ok', hinweis: 'Hinweis', auffaellig: 'auffällig', widerspruch: 'Widerspruch', nicht_pruefbar: 'nicht prüfbar' };
   const ergebnisse = sortiert.map(e => `
-    <div class="mono">${esc(e.code)}</div>
-    <div class="stufe-${e.stufe}">${esc(e.stufe.replace('_', ' '))}</div>
-    <div>${esc(e.begruendung)}</div>`).join('');
+    <div class="mono" title="${esc(e.code)}">${esc(e.code)}</div>
+    <div class="stufe-${e.stufe}">${esc(STUFE_TEXT[e.stufe] ?? e.stufe)}</div>
+    <div><div class="regel">${esc(e.titel ?? '')}</div>${(e.begruendung === 'Prüfung bestanden.' || e.begruendung.replace(/\.$/, '') === (e.titel ?? '')) ? '' : `<div class="begruendung">${esc(e.begruendung)}</div>`}</div>`).join('');
   const auto = d.gedruckt || {};
   const g = {
     gesamt: b.gedruckt.gesamt ?? (auto.gesamt_cent != null ? (auto.gesamt_cent / 100).toFixed(2).replace('.', ',') : ''),

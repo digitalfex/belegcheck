@@ -66,7 +66,7 @@ final class RksvPruefer
                 ['kennzeichen' => $b->algorithmus]);
         }
 
-        return PruefErgebnis::ok('AT-QR-02', 'Format des Kassen-QR-Codes ist korrekt.');
+        return PruefErgebnis::ok('AT-QR-02');
     }
 
     /** AT-QR-03: Datum/Uhrzeit gültig und nicht nach dem Eingang. */
