@@ -14,7 +14,7 @@ class RegelnTest extends TestCase
         $dateien = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(__DIR__.'/../../app'));
         foreach ($dateien as $datei) {
             if ($datei->getExtension() === 'php' && $datei->getFilename() !== 'Regeln.php') {
-                preg_match_all("/'((?:AT|DE)-[A-Z]{2}-\d{2}|BF-\d{2}|PL-[A-Z]{2}-\d{2}|MU-[A-Z]{2}-\d{2}|BW-\d{2})'/", file_get_contents($datei), $m);
+                preg_match_all("/'((?:AT|DE)-[A-Z]{2}-\d{2}|BF-\d{2}|PL-[A-Z]{2}-\d{2}|MU-[A-Z]{2}-\d{2}|BW-\d{2}|LAND-\d{2})'/", file_get_contents($datei), $m);
                 $codes = [...$codes, ...$m[1]];
             }
         }

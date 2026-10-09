@@ -2,11 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Fiskal\DsfinvK\DsfinvkParser;
+use App\Fiskal\KassenDaten;
 use App\Fiskal\KassenGedaechtnis;
 use App\Fiskal\Rksv\RksvParser;
 use App\Pruefung\Stufe;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\RksvTestBeleg;
+use Tests\Support\TseTestBeleg;
 use Tests\TestCase;
 
 class KassenGedaechtnisTest extends TestCase
@@ -15,7 +18,7 @@ class KassenGedaechtnisTest extends TestCase
 
     private function beleg(string $nr, string $zeit, string $kasse = 'KASSE-01', string $zert = '3a7f19c2')
     {
-        return (new RksvParser)->parse(RksvTestBeleg::neu()->mit('belegnummer', $nr)->mit('datumUhrzeit', $zeit)->mit('kassenId', $kasse)->mit('zertifikatSn', $zert)->qr());
+        return KassenDaten::ausRksv((new RksvParser)->parse(RksvTestBeleg::neu()->mit('belegnummer', $nr)->mit('datumUhrzeit', $zeit)->mit('kassenId', $kasse)->mit('zertifikatSn', $zert)->qr()));
     }
 
     /** @return array<string, Stufe> */
@@ -86,5 +89,19 @@ class KassenGedaechtnisTest extends TestCase
         $e = $this->pruefe($this->beleg('5', '2026-10-05T12:00:00', 'KASSE-02'));
 
         $this->assertSame(Stufe::Hinweis, $e['AT-KA-02']);
+    }
+
+    public function test_tse_dublette_und_verlauf(): void
+    {
+        $tse = fn ($nr, $ende) => KassenDaten::ausDsfinvk((new DsfinvkParser)->parse(
+            TseTestBeleg::neu()->mit('transaktion', $nr)->mit('start', $ende)->mit('ende', $ende)->qr()));
+
+        (new KassenGedaechtnis)->merke($tse('500', '2026-10-01T10:00:00.000Z'), 'DE123456789', 'Brauhaus', str_repeat('a', 64));
+
+        $codes = fn ($d) => collect((new KassenGedaechtnis)->pruefe($d, 'DE123456789', 'Brauhaus', str_repeat('b', 64)))->mapWithKeys(fn ($e) => [$e->code => $e->stufe])->all();
+
+        $this->assertSame(Stufe::Widerspruch, $codes($tse('500', '2026-10-01T10:00:00.000Z'))['DE-KA-03']);
+        $this->assertSame(Stufe::Auffaellig, $codes($tse('400', '2026-10-05T10:00:00.000Z'))['DE-KA-02']);
+        $this->assertSame(Stufe::Ok, $codes($tse('600', '2026-10-05T10:00:00.000Z'))['DE-KA-02']);
     }
 }

@@ -12,7 +12,7 @@ final class GedruckteWerte
     public const SICHER_AB = 0.8;
 
     /**
-     * @param  array<string, int>|null  $betraegeJeSatzCent  Schlüssel wie RksvBeleg::SATZ_FELDER
+     * @param  array<string, int>|null  $betraegeJeSatzCent  Schlüssel wie RksvBeleg::SATZ_FELDER bzw. DsfinvkBeleg::SATZ_FELDER
      * @param  array<string, float>  $lesesicherheit  je Feldname (gesamt, betraege, datum_uhrzeit, kassen_id)
      */
     public function __construct(
@@ -21,6 +21,7 @@ final class GedruckteWerte
         public readonly ?string $datumUhrzeit = null,   // JJJJ-MM-TT hh:mm[:ss]
         public readonly ?string $kassenId = null,
         public readonly array $lesesicherheit = [],
+        public readonly ?string $tseSeriennummer = null, // nur DE: gedruckte TSE-Seriennummer
     ) {}
 
     public function sicher(string $feld): bool

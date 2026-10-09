@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Fiskal\BelegTextAuswertung;
 use App\Fiskal\GedruckteWerte;
 use App\Fiskal\KassenGedaechtnis;
 use App\Forensik\ForensikPruefer;
@@ -65,8 +64,8 @@ class PruefController extends Controller
         $zusatz = isset($daten['forensik'])
             ? (new ForensikPruefer)->pruefe($daten['forensik'], $gedruckt->datumUhrzeit)
             : [];
-        if ($rksv = BelegTextAuswertung::rksvAusQr($daten['qr_text'] ?? null)) {
-            $zusatz = [...$zusatz, ...(new KassenGedaechtnis)->pruefe($rksv, $daten['uid'] ?? null, $daten['aussteller'] ?? null, $daten['datei_sha256'] ?? null)];
+        if ($kasse = BelegPruefService::kassenDaten(BelegPruefService::fiskalBeleg($daten['qr_text'] ?? null))) {
+            $zusatz = [...$zusatz, ...(new KassenGedaechtnis)->pruefe($kasse, $daten['uid'] ?? null, $daten['aussteller'] ?? null, $daten['datei_sha256'] ?? null)];
         }
 
         return response()->json($service->pruefeQr($daten['qr_text'] ?? null, $gedruckt, $zusatz));

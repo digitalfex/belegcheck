@@ -82,6 +82,7 @@
   .regel { font-weight: 500; }
   .begruendung { color: var(--muted); margin-top: 1px; }
   .stufe-widerspruch ~ div .begruendung, .stufe-auffaellig ~ div .begruendung { color: var(--ink); }
+  .land { font-size: 10.5px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; margin-right: 6px; }
   .gemerkt { color: var(--gruen); font-size: 13px; align-self: center; }
   .meta { font-size: 12px; color: var(--muted); }
   @media (max-width: 900px) { .detailgitter { grid-template-columns: 1fr; } .original { position: static; } }
@@ -90,7 +91,7 @@
 </head>
 <body>
 <header>
-  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · Sprint 2 · Bilder werden nicht gespeichert, nur Kassendaten grüner/bestätigter Belege</span>
+  <h1>Beleg-Check</h1><span>Werkbank · Prototyp · AT + DE · Bilder werden nicht gespeichert, nur Kassendaten grüner/bestätigter Belege</span>
 </header>
 <main>
   <div class="drop" id="drop">
@@ -322,7 +323,7 @@ function zeile(b, dublette) {
   return `<tr class="beleg" onclick="umschalten(${b.id})">
     <td class="datei" title="${esc(b.name)}">${esc(b.name)}</td>
     <td>${ampel}</td>
-    <td class="datei" title="${esc(d?.aussteller)}">${esc(d?.aussteller)}</td>
+    <td class="datei" title="${esc(d?.aussteller)}">${d?.land ? `<span class="land">${esc(d.land)}</span>` : ''}${esc(d?.aussteller)}</td>
     <td class="mono">${esc(q?.datum_uhrzeit?.replace('T', ' ') ?? d?.gedruckt?.datum_uhrzeit)}</td>
     <td class="mono">${esc(q?.kassen_id)}</td>
     <td class="mono">${esc(q?.belegnummer)}</td>

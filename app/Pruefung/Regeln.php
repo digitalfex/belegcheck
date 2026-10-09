@@ -29,6 +29,26 @@ final class Regeln
         'AT-KA-04' => 'Belegnummer passt zum zeitlichen Verlauf der Kasse',
         'AT-KA-05' => 'Kassenbeleg nicht schon einmal eingereicht',
 
+        // Schicht 1 Deutschland: TSE-QR-Code (DSFinV-K) und Klartext
+        'DE-QR-02' => 'TSE-QR-Code im DSFinV-K-Format (12 Felder, Version V0)',
+        'DE-QR-03' => 'Vorgangsdaten (Beträge, Zahlungen) im QR zerlegbar',
+        'DE-QR-04' => 'Regulärer Verkauf (kein Training, Storno, Abbruch, keine Bestellung)',
+        'DE-QR-05' => 'Umsatz = Zahlungen = gedruckter Gesamtbetrag',
+        'DE-QR-06' => 'Beträge je Steuersatz im QR = gedruckte Steuertabelle',
+        'DE-QR-07' => 'Start/Ende im QR plausibel und passend zur gedruckten Uhrzeit',
+        'DE-QR-08' => 'Gedruckte TSE-Seriennummer = SHA-256 des Schlüssels im QR',
+        'DE-QR-09' => 'Signaturalgorithmus, Zeitformat, Signatur und Schlüssel technisch gültig',
+        'DE-QR-10' => 'Signatur der TSE mathematisch gültig',
+        'DE-TX-01' => 'TSE-Pflichtangaben auf dem Beleg (ohne QR-Code)',
+        'LAND-01' => 'Kassenpflicht-Land erkannt (Österreich/Deutschland)',
+
+        // Schicht 1 Deutschland: Kassen-Gedächtnis (TSE)
+        'DE-KA-01' => 'TSE gehört zum selben Lokal wie bei früheren Belegen',
+        'DE-KA-02' => 'Transaktionsnummer passt zum zeitlichen Verlauf der TSE',
+        'DE-KA-03' => 'Kassenbeleg nicht schon einmal eingereicht',
+        'DE-KA-04' => 'Lokal mit bekannter TSE (neue TSE?)',
+        'DE-KA-05' => 'TSE an derselben Kasse wie bisher',
+
         // Schicht 4: Bildforensik (Metadaten)
         'BF-01' => 'Keine KI-Herkunftskennzeichnung in der Datei',
         'BF-02' => 'Kein Bildbearbeitungsprogramm in den Metadaten',
