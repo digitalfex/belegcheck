@@ -13,7 +13,7 @@ final class BelegleserClient
 {
     public function __construct(
         private readonly string $url,
-        private readonly int $timeout = 30,
+        private readonly int $timeout = 90,
     ) {}
 
     public static function ausConfig(): self

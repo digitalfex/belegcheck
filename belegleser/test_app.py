@@ -103,7 +103,26 @@ def test_lesen_liefert_text_und_qr():
 def test_textschicht_nur_bei_pdf():
     from app import pdf_textschicht
 
-    assert pdf_textschicht(_bon(INHALT)) is None
+    assert pdf_textschicht([]) is None
+
+
+def test_gescanntes_pdf_nutzt_eingebettetes_bild():
+    """Scanner-App-PDF: Originalbild verwenden, die Textschicht der Scanner-App ignorieren."""
+    from app import _pdf_seiten, pdf_textschicht
+
+    bild = Image.open(io.BytesIO(_bon(INHALT))).convert("RGB")
+    puffer = io.BytesIO()
+    bild.save(puffer, format="PDF", resolution=72)
+
+    seiten = _pdf_seiten(puffer.getvalue())
+    assert seiten[0]["scan"] is True
+    assert seiten[0]["bild"].size == bild.size
+    assert pdf_textschicht(seiten) is None
+
+    antwort = client.post("/lesen", files={"datei": ("scan.pdf", puffer.getvalue(), "application/pdf")})
+    j = antwort.json()
+    assert [c["text"] for c in j["codes"]] == [INHALT]
+    assert j["quelle"] == "ocr"
 
 
 # ---------- Bildforensik ----------

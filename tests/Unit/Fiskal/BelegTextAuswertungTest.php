@@ -48,13 +48,108 @@ class BelegTextAuswertungTest extends TestCase
         $this->assertTrue($g->sicher('betraege'));
     }
 
-    public function test_abweichung_in_steuertabelle_ist_unsicher(): void
+    public function test_abweichung_in_steuertabelle(): void
     {
-        // QR sagt 20 % = 28,70 – gedruckt 18,70: wird gelesen, aber nur als unsicher gewertet
+        // QR sagt 20 % = 28,70 – gedruckt 15,58 + 3,12 = 18,70: rechnerisch stimmig gelesen → sicher
         $g = BelegTextAuswertung::ausText(self::BON, 0.95)->gedruckteWerte($this->qr('28,70'));
+        $this->assertSame(1870, $g->betraegeJeSatzCent['normal']);
+        $this->assertTrue($g->sicher('betraege'));
 
+        // nur eine Zahl je Satz, Rolle unklar → unsicher
+        $text = "10% 52,00\n20% 18,70";
+        $g = BelegTextAuswertung::ausText($text, 0.95)->gedruckteWerte($this->qr('28,70'));
         $this->assertSame(1870, $g->betraegeJeSatzCent['normal']);
         $this->assertFalse($g->sicher('betraege'));
+    }
+
+    // ---------- Fälle aus echten Belegen (Testlauf Oktober 2026) ----------
+
+    public function test_steuertabelle_nur_steuerbetraege(): void
+    {
+        // „davon 10% USt. 5,68“ ist der Steuerbetrag, nicht Brutto – passt zu 62,50 brutto
+        $text = "Barzahlung 75,50 EUR\ndavon 10% USt. 5,68\ndavon 20% USt. 2,17";
+        $g = BelegTextAuswertung::ausText($text, 0.9)->gedruckteWerte($this->qr('13,00', '62,50'));
+        $this->assertSame(['ermaessigt1' => 6250, 'normal' => 1300], $g->betraegeJeSatzCent);
+        $this->assertTrue($g->sicher('betraege'));
+        $this->assertSame(7550, $g->gesamtCent, 'Zahlungszeile bestätigt die QR-Summe');
+    }
+
+    public function test_steuertabelle_netto_und_steuer_in_getrennten_zeilen(): void
+    {
+        $text = "Umsatz 10% exkl. €28,82\nMwSt. 10% €2,88\nUmsatz 20% exkl. €8,67\nMwSt. 20% €1,73\nUmsatz 00% exkl. €3,90\nMwSt. 00% €0,00";
+        $g = BelegTextAuswertung::ausText($text)->gedruckteWerte();
+        $this->assertSame(['ermaessigt1' => 3170, 'normal' => 1040, 'null' => 390], $g->betraegeJeSatzCent);
+    }
+
+    public function test_steuertabelle_brutto_davon_steuer_und_netto_von(): void
+    {
+        $this->assertSame(['ermaessigt1' => 3500],
+            BelegTextAuswertung::ausText('MwSt10% aus 35.00 3,18')->gedruckteWerte()->betraegeJeSatzCent);
+        $this->assertSame(['normal' => 43674],
+            BelegTextAuswertung::ausText('MWSt. 20,00 % von 363,95 72,79')->gedruckteWerte()->betraegeJeSatzCent);
+    }
+
+    public function test_unmoegliches_datum_ist_lesefehler(): void
+    {
+        $text = "Datum und Zeit: 13.06.2675 09:30:59\nBeleg 97.02.29 08:43";
+        $this->assertNull(BelegTextAuswertung::ausText($text)->gedruckteWerte()->datumUhrzeit);
+
+        // mit QR: eine Ziffer anders → gelesen, aber unsicher (Hinweis statt Widerspruch)
+        $b = RksvTestBeleg::neu();
+        $b->datumUhrzeit = '2025-06-13T09:30:59';
+        $qr = (new RksvParser)->parse($b->qr());
+        $g = BelegTextAuswertung::ausText($text, 0.95)->gedruckteWerte($qr);
+        $this->assertSame('2675-06-13 09:30', $g->datumUhrzeit);
+        $this->assertFalse($g->sicher('datum_uhrzeit'));
+    }
+
+    public function test_zahlungszeile_als_ersatz_fuer_unleserliche_summe(): void
+    {
+        $g = BelegTextAuswertung::ausText("Pizzeria\nSunne ii 6 | 16; 00\nBETRAG: EUR 12,60", 0.9)->gedruckteWerte();
+        $this->assertSame(1260, $g->gesamtCent);
+        $this->assertFalse($g->sicher('gesamt'));
+    }
+
+    public function test_steuersaetze_einzeln_aus_anderer_lesevariante(): void
+    {
+        // Hauptvariante liest 3↔8 falsch (23,82 statt 28,82), zweite Variante liest den 10-%-Satz richtig
+        $primaer = array_map(fn ($t) => ['text' => $t, 'sicherheit' => 0.9],
+            ['Umsatz 10% exkl. €23,82', 'MwSt. 10% €2,88', 'Umsatz 20% exkl. €8,67', 'MwSt. 20% €1,73']);
+        $alternativ = array_map(fn ($t) => ['text' => $t, 'sicherheit' => 0.85],
+            ['Umsatz 10% exkl. €28,82', 'MwSt. 10% €2,88', 'Umsatz 20% exkl. €3,67', 'MwSt. 20% €1,73']);
+
+        $g = (new BelegTextAuswertung($primaer, $alternativ))->gedruckteWerte($this->qr('10,40', '31,70'));
+        $this->assertSame(['ermaessigt1' => 3170, 'normal' => 1040], $g->betraegeJeSatzCent);
+    }
+
+    public function test_unstimmige_netto_steuer_zeile_entscheidet_der_steuerbetrag(): void
+    {
+        // Alle Lesevarianten lesen 23,82 statt 28,82; 23,82 × 10 % ≠ 2,88 → Steuerbetrag 2,88 passt zum QR-Brutto 31,70
+        $text = "Umsatz 10% exkl. €23,82\nMwSt. 10% €2,88\nUmsatz 20% exkl. €3,67\nMwSt. 20% €1,73";
+        $g = BelegTextAuswertung::ausText($text, 0.9)->gedruckteWerte($this->qr('10,40', '31,70'));
+        $this->assertSame(['ermaessigt1' => 3170, 'normal' => 1040], $g->betraegeJeSatzCent);
+        $this->assertTrue($g->sicher('betraege'));
+
+        // ohne QR: Summe bleibt, aber unsicher
+        $g = BelegTextAuswertung::ausText($text, 0.9)->gedruckteWerte();
+        $this->assertFalse($g->sicher('betraege'));
+    }
+
+    public function test_kassenidentifikationsnummer(): void
+    {
+        $this->assertSame('1', BelegTextAuswertung::ausText('Kassenidentifik.nr. : 1')->gedruckteWerte()->kassenId);
+        $this->assertSame('rk-01', BelegTextAuswertung::ausText('Kassenident-Nr rk-01')->gedruckteWerte()->kassenId);
+    }
+
+    public function test_aussteller_ueberspringt_vermerke_und_adressen(): void
+    {
+        $this->assertSame('Florianigarage', BelegTextAuswertung::ausText("DUPLIKAT\nFlorianigarage\n1080 WIEN")->aussteller());
+        $this->assertSame('Taxicenter GabH', BelegTextAuswertung::ausText("wen KUNDENDEIEG\nTaxicenter GabH\n1100 Wien")->aussteller());
+        $this->assertSame('APCOA PARKING Austria GnbH', BelegTextAuswertung::ausText("BANK KARTE QUITIUNG\nAPCOA PARKING Austria GnbH")->aussteller());
+        $this->assertSame('Wiener tutte', BelegTextAuswertung::ausText("> } L\nWiener tutte\nRechnung RG2025/8388")->aussteller());
+        $this->assertSame('Bu Le Burger', BelegTextAuswertung::ausText("Bu Le Burger _ N\nAuhof Center")->aussteller());
+        $this->assertSame('Österreichische Post AG', BelegTextAuswertung::ausText("Österreichische Post AG\nUID-Nr: ATU46674503")->aussteller());
+        $this->assertSame('Messe Wien', BelegTextAuswertung::ausText("Hadikgasse 128-134\n= 1140 Wien\na Tel. 01/895 10 55\nMesse Wien")->aussteller());
     }
 
     public function test_summenzeile_ohne_netto_zeilen(): void

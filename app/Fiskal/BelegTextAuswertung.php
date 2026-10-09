@@ -66,6 +66,17 @@ final class BelegTextAuswertung
                 'kassen_id' => $f['kasse'],
                 'tse' => $f['tse'],
             ];
+            // Steuersätze einzeln: je Satz den Wert der Variante nehmen, die den QR-Wert gelesen hat
+            if ($w['betraege'][0] !== null && $alt['betraege'][0] !== null) {
+                foreach ($soll['betraege'] as $satz => $cent) {
+                    if (($w['betraege'][0][$satz] ?? null) !== $cent && ($alt['betraege'][0][$satz] ?? null) === $cent) {
+                        $w['betraege'][0][$satz] = $cent;
+                    }
+                }
+                if (array_filter($w['betraege'][0]) === $soll['betraege']) {
+                    $w['betraege'][1] = max($w['betraege'][1], min($alt['betraege'][1], 0.9));
+                }
+            }
             foreach ($soll as $feld => $wert) {
                 $istPrimaer = $feld === 'betraege' && $w[$feld][0] !== null ? array_filter($w[$feld][0]) : $w[$feld][0];
                 $istAlt = $feld === 'betraege' && $alt[$feld][0] !== null ? array_filter($alt[$feld][0]) : $alt[$feld][0];
@@ -123,7 +134,7 @@ final class BelegTextAuswertung
         if (preg_match('/\b(TSE|Signaturz[äa]hler|Transaktionsnummer|Steuer-?Nr\.?\s*\d{2,3}\/)/iu', $text)) {
             return 'DE';
         }
-        if (preg_match('/\b(Kassen-?ID|Registrierkasse)\b/iu', $text) || preg_match('/\b\d{4}\s+(Wien|Graz|Linz|Salzburg|Innsbruck|Klagenfurt|Villach)\b/u', $text)) {
+        if (preg_match('/\b(Kassen-?ID|Registrierkasse|RKSV|Austria|Österreich)\b/iu', $text) || preg_match('/\b\d{4}\s+(Wien|Graz|Linz|Salzburg|Innsbruck|Klagenfurt|Villach)\b/u', $text)) {
             return 'AT';
         }
 
@@ -195,9 +206,25 @@ final class BelegTextAuswertung
         return null;
     }
 
-    /** Erste Textzeile = meist der Name des Lokals. */
+    /** Zeilen im Kopf, die nicht der Name sind: Belegart-Vermerke, Adresse, Kontakt, Kennnummern. */
+    private const KEIN_NAME = '/(duplikat|kopie|kunden\w*|beleg|rechnung|quittung|quit+ung|bank\s*karte|willkommen|welcome|tel\.?|fax|www\.|@|\bUID\b|\bATU\s?\d|\bDE\s?\d{9}|stra(ss|ß)e\s*\d|str\.\s*\d|(gasse|weg|platz|allee|ring|markt)\s*\d|^\W*\d{4,5}\s+\p{L})/iu';
+
+    /**
+     * Name des Ausstellers: erste brauchbare Zeile im Kopf. Übersprungen werden Vermerke („DUPLIKAT“, „Kundenbeleg“),
+     * Adress- und Kontaktzeilen sowie Lesereste aus Logos (zu wenige Buchstaben).
+     */
     public function aussteller(): ?string
     {
+        foreach (array_slice($this->zeilen, 0, 8) as $z) {
+            $text = trim(preg_replace('/^([^\p{L}\p{N}]+|\p{L}\s)+|(\s[^\p{L}\p{N}]*\p{L}?[^\p{L}\p{N}]*)+$/u', '', trim($z['text'])));
+            $buchstaben = preg_match_all('/\p{L}/u', $text);
+            if ($buchstaben < 4 || $buchstaben < 0.6 * mb_strlen(str_replace(' ', '', $text)) || preg_match(self::KEIN_NAME, $text)) {
+                continue;
+            }
+
+            return $text;
+        }
+
         return $this->zeilen[0]['text'] ?? null;
     }
 
@@ -227,16 +254,20 @@ final class BelegTextAuswertung
             }
         }
 
-        if ($kandidaten === []) {
-            return [null, null];
-        }
-
         if ($f && $f['summe'] !== null) {
-            foreach ($kandidaten as $k) {
+            foreach ([...$kandidaten, ...$this->zahlungsZeilen()] as $k) {
                 if (in_array($f['summe'], $k['betraege'], true)) {
                     return [$f['summe'], $k['sicherheit']];
                 }
             }
+        }
+
+        if ($kandidaten === []) {
+            // Summenzeile unleserlich: Zahlungszeile („Bar 46,00“, „Betrag EUR 12,60“) als Ersatz –
+            // kann Trinkgeld enthalten, daher nur unsicher gelesen
+            $zahlung = $this->zahlungsZeilen()[0] ?? null;
+
+            return $zahlung ? [end($zahlung['betraege']), min($zahlung['sicherheit'], self::UNSICHERE_ZUORDNUNG)] : [null, null];
         }
 
         $wert = end($kandidaten[0]['betraege']);
@@ -248,6 +279,29 @@ final class BelegTextAuswertung
         }
 
         return [$wert, $sicherheit];
+    }
+
+    /** @return list<array{betraege: list<int>, sicherheit: float}> */
+    private function zahlungsZeilen(): array
+    {
+        $kandidaten = [];
+        foreach ($this->zeilen as $z) {
+            if (preg_match('/\b(bar(zahlung)?|bankomat|banko|karte|kartenzahlung|kredit|maestro|mastercard|visa|betrag|bezahlt)\b/iu', $z['text'])
+                && ! preg_match('/\b(netto|mwst|ust|steuer|trinkgeld|tip|r[üu]ckgeld|retour)\b/iu', $z['text'])
+                && ($b = self::betraege($z['text'])) !== []) {
+                $kandidaten[] = ['betraege' => $b, 'sicherheit' => $z['sicherheit']];
+            }
+        }
+
+        return $kandidaten;
+    }
+
+    private static function zifferAbweichungen(string $a, string $b): int
+    {
+        $a = preg_replace('/\D/', '', $a);
+        $b = preg_replace('/\D/', '', $b);
+
+        return strlen($a) === strlen($b) ? count(array_diff_assoc(str_split($a), str_split($b))) : PHP_INT_MAX;
     }
 
     private static function eineZifferAnders(int $a, int $b): bool
@@ -266,33 +320,75 @@ final class BelegTextAuswertung
     {
         $satzFeld = $f['satz_feld'] ?? self::SATZ_FELD;
         $saetze = implode('|', array_map(fn ($p) => preg_quote($p, '/'), array_keys($satzFeld)));
-        $gefunden = [];
-        $sicherheiten = [];
-        $unsicher = false;
 
+        // 1. Alle Zeilen je Steuersatz einsammeln und Netto/Steuer/Brutto zuordnen
+        $teile = []; // feld => ['satz' => float, 'brutto' => ?int, 'netto' => ?int, 'steuer' => ?int, 'unklar' => ?int]
+        $sicherheiten = [];
         foreach ($this->zeilen as $z) {
-            if (! preg_match('/(?:^|[\s:A-D])('.$saetze.')(?:[,.]0+)?\s?%/u', $z['text'], $m)) {
+            if (! preg_match('/(?<![\d,.])0*('.$saetze.')(?:[,.]0+)?\s?%/u', $z['text'], $m)) {
                 continue;
             }
             $feld = $satzFeld[$m[1]];
+            $satz = (float) str_replace(',', '.', $m[1]);
             $betraege = self::betraege(substr($z['text'], strpos($z['text'], $m[0]) + strlen($m[0])));
-            if ($betraege === [] || isset($gefunden[$feld])) {
+            if ($betraege === []) {
                 continue;
             }
-
+            $t = $teile[$feld] ?? ['satz' => $satz, 'brutto' => null, 'netto' => null, 'steuer' => null, 'unklar' => null];
             $qrWert = $f['betraege'][$feld] ?? null;
+
             if ($qrWert !== null && in_array($qrWert, $betraege, true)) {
-                $gefunden[$feld] = $qrWert;
+                $t['brutto'] = $qrWert;
+            } elseif (($b = self::bruttoAusSpalten($betraege, $satz)) !== null) {
+                $t['brutto'] ??= $b;
+            } elseif (count($betraege) === 1) {
+                $rolle = match (true) {
+                    (bool) preg_match('/brutto/iu', $z['text']) => 'brutto',
+                    (bool) preg_match('/(exkl|netto|umsatz)/iu', $z['text']) => 'netto',
+                    (bool) preg_match('/(mw\.?st|ust|steuer|davon|vat)/iu', $z['text']) => 'steuer',
+                    default => 'unklar',
+                };
+                $t[$rolle] ??= $betraege[0];
             } else {
-                // Brutto steht meist rechts – Zuordnung aber unsicher (Spaltenlayouts variieren)
-                $gefunden[$feld] = end($betraege);
-                $unsicher = true;
+                $t['unklar'] ??= end($betraege); // Brutto steht meist rechts – Zuordnung aber unsicher
             }
+            $teile[$feld] = $t;
             $sicherheiten[] = $z['sicherheit'];
         }
 
-        if ($gefunden === []) {
+        if ($teile === []) {
             return [null, null];
+        }
+
+        // 2. Brutto je Satz bestimmen; abgeleitete oder unklare Werte gelten als unsicher gelesen
+        $gefunden = [];
+        $unsicher = false;
+        foreach ($teile as $feld => $t) {
+            $qrWert = $f['betraege'][$feld] ?? null;
+            $p = $t['satz'];
+            if ($t['brutto'] !== null) {
+                $gefunden[$feld] = $t['brutto'];
+            } elseif ($t['netto'] !== null && $t['steuer'] !== null && abs($t['netto'] * $p / 100 - $t['steuer']) <= 2) {
+                $gefunden[$feld] = $t['netto'] + $t['steuer'];
+            } elseif ($qrWert !== null && self::passtZuBrutto($t, $qrWert)) {
+                // Nur Steuer- oder Nettobetrag gedruckt („davon 10 % USt. 5,68“) oder Netto und Steuer
+                // rechnerisch unstimmig gelesen (Lesefehler 3↔8) – einer davon passt aber zum QR-Brutto
+                $gefunden[$feld] = $qrWert;
+            } elseif ($t['netto'] !== null && $t['steuer'] !== null) {
+                $gefunden[$feld] = $t['netto'] + $t['steuer'];
+                $unsicher = true;
+            } elseif ($p == 0.0 && ($t['netto'] ?? $t['unklar']) !== null) {
+                $gefunden[$feld] = $t['netto'] ?? $t['unklar'];
+            } elseif ($t['steuer'] !== null && $p > 0) {
+                $gefunden[$feld] = (int) round($t['steuer'] * (100 + $p) / $p);
+                $unsicher = true;
+            } elseif ($t['netto'] !== null) {
+                $gefunden[$feld] = (int) round($t['netto'] * (100 + $p) / 100);
+                $unsicher = true;
+            } else {
+                $gefunden[$feld] = $t['unklar'];
+                $unsicher = true;
+            }
         }
 
         // Steuertabelle unvollständig gelesen? Dann nicht vergleichen.
@@ -309,6 +405,46 @@ final class BelegTextAuswertung
         return [$gefunden, $unsicher ? min($sicherheit, self::UNSICHERE_ZUORDNUNG) : $sicherheit];
     }
 
+    /**
+     * Brutto aus den Spalten einer Steuerzeile, wenn sich die Beträge rechnerisch bestätigen:
+     * „Netto Steuer Brutto“ (67,73 6,77 74,50), „Netto Steuer“ (363,95 72,79) oder „Brutto davon Steuer“ (35,00 3,18).
+     */
+    private static function bruttoAusSpalten(array $b, float $satz): ?int
+    {
+        for ($i = 0; $i + 2 < count($b); $i++) {
+            if (abs($b[$i] + $b[$i + 1] - $b[$i + 2]) <= 1) {
+                return $b[$i + 2];
+            }
+        }
+        if ($satz > 0) {
+            for ($i = 0; $i + 1 < count($b); $i++) {
+                [$x, $y] = [$b[$i], $b[$i + 1]];
+                if ($x > 0 && abs($x * $satz / 100 - $y) <= 2) {
+                    return $x + $y;
+                }
+                if ($x > 0 && abs($x * $satz / (100 + $satz) - $y) <= 2) {
+                    return $x;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** Passt ein einzeln gedruckter Steuer- oder Nettobetrag zum Brutto aus dem QR-Code (Rundung ±2 Cent)? */
+    private static function passtZuBrutto(array $t, int $brutto): bool
+    {
+        $p = $t['satz'];
+        $steuer = $p > 0 ? $brutto * $p / (100 + $p) : 0.0;
+        foreach (['steuer' => $steuer, 'netto' => $brutto - $steuer, 'unklar' => $steuer] as $rolle => $soll) {
+            if ($t[$rolle] !== null && ($p > 0 || $rolle === 'netto') && abs($t[$rolle] - $soll) <= 2) {
+                return true;
+            }
+        }
+        // „unklar“ kann auch der Nettobetrag sein
+        return $t['unklar'] !== null && abs($t['unklar'] - ($brutto - $steuer)) <= 2;
+    }
+
     /** @return array{0: ?string, 1: ?float} Format "JJJJ-MM-TT hh:mm" */
     private function datumUhrzeit(?array $f): array
     {
@@ -322,25 +458,34 @@ final class BelegTextAuswertung
                 $text .= ' '.$this->zeilen[$i + 1]['text'];
             }
             if (preg_match($muster, $text, $m)) {
-                $jahr = strlen($m[3]) === 2 ? '20'.$m[3] : $m[3];
-                $treffer[] = [sprintf('%04d-%02d-%02d %02d:%02d', $jahr, $m[2], $m[1], $m[4], $m[5]), $z['sicherheit']];
+                $jahr = (int) (strlen($m[3]) === 2 ? '20'.$m[3] : $m[3]);
+                $wert = sprintf('%04d-%02d-%02d %02d:%02d', $jahr, $m[2], $m[1], $m[4], $m[5]);
+                // Unmögliche Daten („2675-06-13“, „29.02.97“) sind Lesefehler, keine Angaben auf dem Beleg
+                $moeglich = checkdate((int) $m[2], (int) $m[1], $jahr) && $jahr >= 2000 && $jahr <= (int) date('Y') + 1
+                    && (int) $m[4] < 24 && (int) $m[5] < 60;
+                $treffer[] = [$wert, $z['sicherheit'], $moeglich];
             }
         }
 
-        if ($treffer === []) {
-            return [null, null];
+        $qrWert = $f && $f['zeit'] ? substr(str_replace('T', ' ', $f['zeit']), 0, 16) : null;
+        foreach ($treffer as $t) {
+            if ($t[0] === $qrWert) {
+                return [$t[0], $t[1]];
+            }
         }
-
-        if ($f && $f['zeit']) {
-            $qrWert = substr(str_replace('T', ' ', $f['zeit']), 0, 16);
-            foreach ($treffer as $t) {
-                if ($t[0] === $qrWert) {
-                    return $t;
-                }
+        foreach ($treffer as $t) {
+            // Höchstens zwei Ziffern anders als im QR-Code (2025 → 2675) → wahrscheinlich Lesefehler, nur unsicher gelesen
+            if ($qrWert !== null && self::zifferAbweichungen($t[0], $qrWert) <= 2) {
+                return [$t[0], min($t[1], self::UNSICHERE_ZUORDNUNG)];
+            }
+        }
+        foreach ($treffer as $t) {
+            if ($t[2]) {
+                return [$t[0], $t[1]];
             }
         }
 
-        return $treffer[0];
+        return [null, null];
     }
 
     /** @return array{0: ?string, 1: ?float} */
@@ -356,7 +501,7 @@ final class BelegTextAuswertung
         }
 
         foreach ($this->zeilen as $z) {
-            if (preg_match('/kassen[\s-]?(?:id|1d|nr\.?|nummer|seriennummer|-?sn)\s*[:#]?\s*(\S+)/iu', $z['text'], $m)) {
+            if (preg_match('/kassen[\s-]?(?:ident\w*\.?(?:[\s-]*n\w{0,4}r\.?)?|id\b|1d\b|nr\.?|nummer|seriennummer|-?sn)\s*[:#]?\s*(?![:#])(\S+)/iu', $z['text'], $m)) {
                 // Fast gleich wie im QR (ein Zeichen anders) → wahrscheinlich Lesefehler
                 $fastGleich = $f && $f['kasse'] && levenshtein(self::norm($m[1]), self::norm($f['kasse'])) <= 1;
 

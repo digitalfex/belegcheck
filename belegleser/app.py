@@ -28,26 +28,60 @@ app = FastAPI(title="Belegleser", version="0.1.0")
 MAX_BYTES = 20 * 1024 * 1024
 
 
-def _bilder_aus_datei(daten: bytes, name: str) -> list[Image.Image]:
-    """Liefert eine Liste von Bildern (PDF: eine Seite je Bild, 300 dpi)."""
-    if name.lower().endswith(".pdf") or daten[:4] == b"%PDF":
-        import pypdfium2 as pdfium
+def _scanbild(seite) -> Image.Image | None:
+    """
+    Gescannte PDF-Seite (Scanner-App wie SwiftScan, Adobe Scan …): genau ein Bild, das die ganze Seite füllt.
+    Dann das eingebettete Bild in Originalauflösung nehmen statt neu zu rendern – Hochrechnen auf 300 dpi
+    vergrößert nur das Scan-Raster und verschlechtert QR- und Texterkennung.
+    """
+    bilder = [o for o in seite.get_objects() if o.type == 3]  # FPDF_PAGEOBJ_IMAGE
+    if len(bilder) != 1 or seite.get_rotation():
+        return None
+    breite, hoehe = seite.get_size()
+    links, unten, rechts, oben = bilder[0].get_bounds()
+    if (rechts - links) * (oben - unten) < 0.9 * breite * hoehe:
+        return None
+    try:
+        bild = bilder[0].get_bitmap(render=False).to_pil()
+    except Exception:  # noqa: BLE001 – exotische Bildformate: normal rendern
+        return None
+    if abs(bild.width / bild.height - breite / hoehe) > 0.03 * breite / hoehe:
+        return None  # gedreht/gespiegelt eingebettet
+    return bild
 
-        pdf = pdfium.PdfDocument(daten)
-        return [seite.render(scale=300 / 72).to_pil() for seite in pdf]
+
+def _pdf_seiten(daten: bytes) -> list[dict]:
+    """Je Seite: Bild, ob es ein Scan ist, und die Textschicht."""
+    import pypdfium2 as pdfium
+
+    seiten = []
+    for seite in pdfium.PdfDocument(daten):
+        scan = _scanbild(seite)
+        seiten.append({
+            "bild": scan if scan is not None else seite.render(scale=300 / 72).to_pil(),
+            "scan": scan is not None,
+            "text": seite.get_textpage().get_text_range(),
+        })
+    return seiten
+
+
+def _bilder_aus_datei(daten: bytes, name: str) -> list[Image.Image]:
+    """Liefert eine Liste von Bildern (PDF: eine Seite je Bild)."""
+    if name.lower().endswith(".pdf") or daten[:4] == b"%PDF":
+        return [s["bild"] for s in _pdf_seiten(daten)]
 
     bild = Image.open(io.BytesIO(daten))
     return [ImageOps.exif_transpose(bild)]  # Handyfotos richtig drehen
 
 
-def pdf_textschicht(daten: bytes) -> list[str] | None:
-    """Digitale PDF-Belege (z. B. E-Mail-Rechnungen) haben eine Textschicht – die ist genauer als jede Texterkennung."""
-    if daten[:4] != b"%PDF":
+def pdf_textschicht(seiten: list[dict]) -> list[str] | None:
+    """
+    Digitale PDF-Belege (z. B. E-Mail-Rechnungen) haben eine Textschicht – die ist genauer als jede Texterkennung.
+    Bei Scans stammt die Textschicht von der Scanner-App (deren eigene, oft schwache Texterkennung) → nicht verwenden.
+    """
+    if not seiten or any(s["scan"] for s in seiten):
         return None
-    import pypdfium2 as pdfium
-
-    pdf = pdfium.PdfDocument(daten)
-    texte = [seite.get_textpage().get_text_range() for seite in pdf]
+    texte = [s["text"] for s in seiten]
     return texte if sum(len(t.strip()) for t in texte) > 30 else None
 
 
@@ -124,14 +158,42 @@ def _varianten(bild: Image.Image):
     yield grau.point(lambda p: 255 if p > 140 else 0)  # harte Schwelle
 
 
+def _qr_varianten_gruendlich(bild: Image.Image):
+    """
+    Zweite Stufe für Scans mit Raster-/Punktmuster (Scanner-Apps schärfen und rastern blasse Thermobons):
+    vergrößern und weichzeichnen, damit aus dem Punktmuster wieder geschlossene QR-Module werden.
+    """
+    from PIL import ImageFilter
+
+    grau = bild.convert("L")
+    for faktor in (1.5, 2, 2.5, 3):
+        if max(grau.size) * faktor > 9000:
+            break
+        gross = grau.resize((int(grau.width * faktor), int(grau.height * faktor)), Image.LANCZOS)
+        for kontrast in (False, True):
+            basis = ImageOps.autocontrast(gross, cutoff=2) if kontrast else gross
+            yield basis.filter(ImageFilter.GaussianBlur(faktor))
+
+
 def qr_codes_lesen(bild: Image.Image) -> list[dict]:
     gefunden: dict[str, dict] = {}
-    for variante in _varianten(bild):
-        for code in zxingcpp.read_barcodes(variante):
+
+    def sammle(codes) -> bool:
+        for code in codes:
             if code.text and code.text not in gefunden:
                 gefunden[code.text] = {"text": code.text, "format": str(code.format).split(".")[-1]}
-        if gefunden:
-            break
+        return any("QR" in c["format"] for c in gefunden.values())
+
+    for variante in _varianten(bild):
+        if sammle(zxingcpp.read_barcodes(variante)):
+            return list(gefunden.values())
+
+    # Stufe 2 nur, wenn noch kein QR-Code gefunden wurde
+    qr = zxingcpp.BarcodeFormat.QRCode
+    for variante in _qr_varianten_gruendlich(bild):
+        for binarisierung in (zxingcpp.Binarizer.GlobalHistogram, zxingcpp.Binarizer.LocalAverage):
+            if sammle(zxingcpp.read_barcodes(variante, formats=qr, binarizer=binarisierung)):
+                return list(gefunden.values())
     return list(gefunden.values())
 
 
@@ -262,11 +324,16 @@ async def lesen(datei: UploadFile = File(...)) -> dict:
     if len(daten) > MAX_BYTES:
         raise HTTPException(413, "Datei größer als 20 MB")
     try:
-        bilder = _bilder_aus_datei(daten, datei.filename or "")
+        if daten[:4] == b"%PDF" or (datei.filename or "").lower().endswith(".pdf"):
+            pdf_seiten = _pdf_seiten(daten)
+            bilder = [s["bild"] for s in pdf_seiten]
+        else:
+            pdf_seiten = []
+            bilder = _bilder_aus_datei(daten, datei.filename or "")
     except Exception as e:  # noqa: BLE001
         raise HTTPException(422, f"Datei nicht lesbar: {e}") from e
 
-    textschicht = pdf_textschicht(daten)
+    textschicht = pdf_textschicht(pdf_seiten)
 
     codes: list[dict] = []
     seiten: list[dict] = []
