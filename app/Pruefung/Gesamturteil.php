@@ -68,14 +68,20 @@ final class Gesamturteil
      */
     public function empfehlung(array $schwellen = []): string
     {
-        $freigabeAb = (int) ($schwellen['freigabe_ab'] ?? 86);
-        $minAbdeckung = (float) ($schwellen['min_abdeckung'] ?? 0.6);
         $widerspruch = collect($this->bericht['ergebnisse'] ?? [])->contains('stufe', Stufe::Widerspruch->value);
 
+        return self::empfehlungAus($this->score(), $this->abdeckung(), $widerspruch, $schwellen);
+    }
+
+    public static function empfehlungAus(int $score, float $abdeckung, bool $widerspruch, array $schwellen = []): string
+    {
         return match (true) {
-            $widerspruch || $this->score() < $freigabeAb => 'manuell_pruefen',
-            $this->abdeckung() >= $minAbdeckung => 'automatisch_freigeben',
+            $widerspruch || $score < (int) ($schwellen['freigabe_ab'] ?? 86) => 'manuell_pruefen',
+            $abdeckung >= (float) ($schwellen['min_abdeckung'] ?? 0.6) => 'automatisch_freigeben',
             default => 'stichprobe', // unauffällig, aber wenig prüfbar
         };
     }
+
+    /** Rangfolge für Zusammenfassungen (Stapel): die strengste Empfehlung gewinnt */
+    public const EMPFEHLUNG_RANG = ['automatisch_freigeben' => 0, 'stichprobe' => 1, 'manuell_pruefen' => 2];
 }

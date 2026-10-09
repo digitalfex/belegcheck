@@ -2,6 +2,7 @@
 
 use App\Api\Darstellung;
 use App\Http\Controllers\Api\PruefungController;
+use App\Http\Controllers\Api\StapelController;
 use App\Http\Middleware\ApiSchluesselPruefen;
 use Illuminate\Support\Facades\Route;
 
@@ -17,4 +18,7 @@ Route::prefix('v1')->middleware([ApiSchluesselPruefen::class, 'throttle:belegche
     Route::get('pruefungen/{id}', [PruefungController::class, 'show']);
     Route::delete('pruefungen/{id}', [PruefungController::class, 'destroy']);
     Route::post('pruefungen/{id}/entscheidung', [PruefungController::class, 'entscheidung']);
+    Route::post('stapel', [StapelController::class, 'store']);
+    Route::get('stapel/{id}', [StapelController::class, 'show']);
+    Route::delete('stapel/{id}', [StapelController::class, 'destroy']);
 });

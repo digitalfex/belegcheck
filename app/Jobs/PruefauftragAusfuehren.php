@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Api\Eingang;
 use App\Api\PruefauftragDienst;
+use App\Api\StapelAbschluss;
 use App\Models\Pruefauftrag;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -43,9 +44,12 @@ class PruefauftragAusfuehren implements ShouldQueue
             return;
         }
         Eingang::loeschen($auftrag->ablage_pfad);
+        $imStapel = $auftrag->stapel_id !== null;
         $auftrag->update(['status' => 'fehler', 'fehler' => 'Prüfung fehlgeschlagen (Belegleser nicht erreichbar oder Datei nicht lesbar).', 'ablage_pfad' => null,
-            'webhook_status' => $auftrag->mandant?->webhook_url ? 'offen' : null]);
-        if ($auftrag->mandant?->webhook_url) {
+            'webhook_status' => $auftrag->mandant?->webhook_url && ! $imStapel ? 'offen' : null]);
+        if ($imStapel) {
+            StapelAbschluss::versuchen($auftrag->stapel_id);
+        } elseif ($auftrag->mandant?->webhook_url) {
             WebhookZustellen::dispatch($auftrag->id);
         }
     }

@@ -18,6 +18,11 @@ class Pruefauftrag extends Model
 
     protected $casts = ['angaben' => 'array', 'ergebnis' => 'array', 'fertig_am' => 'datetime', 'beleg_zeit' => 'datetime', 'abdeckung' => 'float'];
 
+    public function stapel(): BelongsTo
+    {
+        return $this->belongsTo(Pruefstapel::class, 'stapel_id');
+    }
+
     public function mandant(): BelongsTo
     {
         return $this->belongsTo(Mandant::class);

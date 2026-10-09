@@ -32,6 +32,7 @@ security:
   - apiSchluessel: []
 tags:
   - name: Prüfungen
+  - name: Stapel
   - name: Betrieb
 paths:
   /pruefungen:
@@ -168,6 +169,91 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Pruefung' }
         '409': { $ref: '#/components/responses/Problem' }
+  /stapel:
+    post:
+      tags: [Stapel]
+      operationId: stapelAnlegen
+      summary: Mehrere Belege einer Abrechnung prüfen (asynchron)
+      description: |
+        Immer asynchron: Antwort `202` mit `Location`. Jeder Beleg wird einzeln geprüft; nach dem letzten folgt ein
+        Orts-/Zeitcheck über den ganzen Stapel (ein Stapel = eine Person) und **ein** Webhook `stapel.fertig`
+        mit Zusammenfassung und allen Einzelprüfungen. Höchstens 100 Belege je Stapel.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 191 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: ['dateien[]']
+              properties:
+                'dateien[]':
+                  type: array
+                  items: { type: string, format: binary }
+                positionen:
+                  type: string
+                  description: 'JSON-Liste in derselben Reihenfolge wie die Dateien, je Beleg Angaben, z. B. [{"externe_referenz":"P1","betrag":"46,00","kategorie":"bewirtung"}]'
+                externe_referenz: { type: string, description: Kennung der Abrechnung im ERP }
+                einreicher: { type: string, description: Pseudonyme Kennung der Person }
+          application/json:
+            schema:
+              type: object
+              required: [belege]
+              properties:
+                externe_referenz: { type: string }
+                einreicher: { type: string }
+                belege:
+                  type: array
+                  maxItems: 100
+                  items:
+                    allOf:
+                      - type: object
+                        required: [datei_base64, dateiname]
+                        properties:
+                          datei_base64: { type: string, contentEncoding: base64 }
+                          dateiname: { type: string }
+                      - $ref: '#/components/schemas/Angaben'
+      responses:
+        '202':
+          description: Angenommen
+          headers:
+            Location: { schema: { type: string, format: uri } }
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stapel' }
+        '200':
+          description: Wiederholung mit gleichem Idempotency-Key (Stapel bereits fertig)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stapel' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /stapel/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stapel]
+      operationId: stapelAbrufen
+      summary: Stand und Ergebnis eines Stapels
+      responses:
+        '200':
+          description: Stapel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stapel' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Stapel]
+      operationId: stapelLoeschen
+      summary: Stapel samt aller Prüfungen löschen
+      responses:
+        '204': { description: Gelöscht }
+        '404': { $ref: '#/components/responses/Problem' }
   /gesund:
     get:
       tags: [Betrieb]
@@ -185,6 +271,22 @@ paths:
                   status: { const: ok }
                   regelwerk: { type: string }
 webhooks:
+  stapelFertig:
+    post:
+      summary: Stapel fertig (alle Belege geprüft oder fehlgeschlagen)
+      description: Gleiche Signatur und Wiederholungen wie `pruefungFertig`. Für Belege in einem Stapel gibt es keine Einzel-Webhooks.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: { type: string }
+                typ: { const: stapel.fertig }
+                erstellt_am: { type: string, format: date-time }
+                daten: { $ref: '#/components/schemas/Stapel' }
+      responses:
+        '2XX': { description: Empfangen }
   pruefungFertig:
     post:
       summary: Prüfung fertig oder fehlgeschlagen
@@ -292,7 +394,41 @@ components:
                   additionalProperties: { type: [string, 'null'] }
         fehler: { type: [string, 'null'] }
         entscheidung: { type: [object, 'null'] }
+        stapel: { type: [string, 'null'], description: ID des Stapels, falls Teil eines Stapels }
         regelwerk: { type: string, description: Version der Prüfregeln }
+        links: { type: object, properties: { self: { type: string, format: uri } } }
+    Stapel:
+      type: object
+      properties:
+        id: { type: string, description: ULID }
+        objekt: { const: stapel }
+        status: { type: string, enum: [laeuft, fertig] }
+        erstellt_am: { type: string, format: date-time }
+        fertig_am: { type: [string, 'null'], format: date-time }
+        externe_referenz: { type: [string, 'null'] }
+        einreicher: { type: [string, 'null'] }
+        anzahl: { type: integer }
+        fortschritt: { type: object, properties: { fertig: { type: integer }, gesamt: { type: integer } } }
+        ergebnis:
+          type: [object, 'null']
+          description: Zusammenfassung – die strengste Einzelbewertung bestimmt Ampel und Empfehlung
+          properties:
+            anzahl: { type: integer }
+            fertig: { type: integer }
+            fehler: { type: integer }
+            ampel: { type: [string, 'null'], enum: [gruen, gelb, rot, null] }
+            score_min: { type: [integer, 'null'] }
+            empfehlung: { $ref: '#/components/schemas/Empfehlung' }
+            manuell_pruefen: { type: integer, description: Anzahl Belege mit Empfehlung manuell_pruefen (inkl. fehlgeschlagene) }
+            summe_belege_cent: { type: integer }
+        pruefungen:
+          type: array
+          items:
+            allOf:
+              - type: object
+                properties: { position: { type: integer } }
+              - $ref: '#/components/schemas/Pruefung'
+        regelwerk: { type: string }
         links: { type: object, properties: { self: { type: string, format: uri } } }
     Problem:
       type: object

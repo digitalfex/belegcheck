@@ -27,5 +27,6 @@ return [
     'api' => [
         'anfragen_je_minute' => (int) env('BELEG_API_ANFRAGEN_JE_MINUTE', 120),
         'max_mb' => (int) env('BELEG_API_MAX_MB', 25),
+        'max_belege_je_stapel' => (int) env('BELEG_API_MAX_BELEGE', 100),
     ],
 ];

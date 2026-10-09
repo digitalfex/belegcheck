@@ -57,10 +57,12 @@ final class PruefauftragDienst
             'empfehlung' => $bericht['urteil']['empfehlung'],
             'ergebnis' => self::ergebnisSpeichern($bericht),
             'fertig_am' => now(),
-            'webhook_status' => $mandant->webhook_url ? 'offen' : null,
+            'webhook_status' => $mandant->webhook_url && ! $auftrag->stapel_id ? 'offen' : null,
         ])->save();
 
-        if ($mandant->webhook_url) {
+        if ($auftrag->stapel_id) {
+            StapelAbschluss::versuchen($auftrag->stapel_id); // ein Webhook für den ganzen Stapel
+        } elseif ($mandant->webhook_url) {
             WebhookZustellen::dispatch($auftrag->id);
         }
 
@@ -72,6 +74,28 @@ final class PruefauftragDienst
     {
         return array_intersect_key($b, array_flip(['risikowert', 'ampel', 'urteil', 'ergebnisse', 'gedruckt', 'qr', 'qr_typ', 'qr_text',
             'uid', 'land', 'aussteller', 'ort', 'ki', 'aussteller_pruefung', 'text_quelle']));
+    }
+
+    /**
+     * Gespeichertes Ergebnis um weitere Befunde ergänzen (z. B. Orts-/Zeitcheck über den ganzen Stapel).
+     * Die Abdeckung bleibt, Risikowert, Score, Ampel und Empfehlung werden neu berechnet.
+     *
+     * @param  list<PruefErgebnis>  $zusatz
+     */
+    public static function ergaenzen(Pruefauftrag $auftrag, array $zusatz, array $schwellen): void
+    {
+        $e = $auftrag->ergebnis ?? [];
+        $alle = [...array_map(fn ($x) => PruefErgebnis::ausArray($x), $e['ergebnisse'] ?? []), ...$zusatz];
+        $bewertung = new Risikobewertung($alle);
+        $score = max(0, 100 - $bewertung->risikowert());
+        $widerspruch = collect($alle)->contains(fn (PruefErgebnis $x) => $x->stufe === Stufe::Widerspruch);
+        $empfehlung = Gesamturteil::empfehlungAus($score, (float) $auftrag->abdeckung, $widerspruch, $schwellen);
+
+        $e['ergebnisse'] = array_map(fn (PruefErgebnis $x) => $x->toArray(), $alle);
+        $e['risikowert'] = $bewertung->risikowert();
+        $e['ampel'] = $bewertung->ampel();
+        $e['urteil'] = [...($e['urteil'] ?? []), 'score' => $score, 'empfehlung' => $empfehlung];
+        $auftrag->update(['ergebnis' => $e, 'score' => $score, 'ampel' => $e['ampel'], 'empfehlung' => $empfehlung]);
     }
 
     /** @param  list<PruefErgebnis>  $zusatz */

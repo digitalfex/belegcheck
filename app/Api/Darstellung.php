@@ -3,13 +3,36 @@
 namespace App\Api;
 
 use App\Models\Pruefauftrag;
+use App\Models\Pruefstapel;
 
 /**
  * JSON-Darstellung eines Prüfauftrags für die Schnittstelle (stabiles Format, Version v1).
  */
 final class Darstellung
 {
-    public const REGELWERK = '2026.10.3';
+    public const REGELWERK = '2026.10.4';
+
+    public static function stapel(Pruefstapel $s): array
+    {
+        $auftraege = $s->relationLoaded('auftraege') ? $s->auftraege : $s->auftraege()->get();
+        $fertig = $s->status === 'fertig';
+
+        return [
+            'id' => $s->id,
+            'objekt' => 'stapel',
+            'status' => $fertig ? 'fertig' : 'laeuft',
+            'erstellt_am' => $s->created_at?->toIso8601String(),
+            'fertig_am' => $s->fertig_am?->toIso8601String(),
+            'externe_referenz' => $s->externe_referenz,
+            'einreicher' => $s->einreicher,
+            'anzahl' => $s->anzahl,
+            'fortschritt' => ['fertig' => $auftraege->whereIn('status', ['fertig', 'fehler'])->count(), 'gesamt' => $s->anzahl],
+            'ergebnis' => $fertig ? $s->ergebnis : null,
+            'pruefungen' => $auftraege->map(fn (Pruefauftrag $a) => ['position' => $a->position, ...self::pruefung($a)])->values()->all(),
+            'regelwerk' => self::REGELWERK,
+            'links' => ['self' => url('/api/v1/stapel/'.$s->id)],
+        ];
+    }
 
     public static function pruefung(Pruefauftrag $a): array
     {
@@ -39,6 +62,7 @@ final class Darstellung
             ] : null,
             'fehler' => $a->status === 'fehler' ? $a->fehler : null,
             'entscheidung' => $a->entscheidung ? ['ergebnis' => $a->entscheidung, 'kommentar' => $a->entscheidung_kommentar] : null,
+            'stapel' => $a->stapel_id,
             'regelwerk' => self::REGELWERK,
             'links' => ['self' => url('/api/v1/pruefungen/'.$a->id)],
         ];

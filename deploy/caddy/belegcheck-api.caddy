@@ -1,0 +1,27 @@
+# Belegcheck – öffentliche Schnittstelle (nur /api/*). Die Werkbank bleibt intern (SSH-Tunnel).
+# Ablage am Server: /etc/caddy/instanzen/belegcheck-api.caddy (wird vom Caddyfile des Servers eingebunden).
+api.belegcheck.at {
+	encode zstd gzip
+	request_body {
+		max_size 260MB
+	}
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8095 {
+			transport http {
+				read_timeout 320s
+				write_timeout 320s
+			}
+		}
+	}
+	handle / {
+		redir /api/v1/openapi.yaml 302
+	}
+	handle {
+		respond 404
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+	}
+}
