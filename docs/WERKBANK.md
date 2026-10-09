@@ -25,3 +25,14 @@ ssh -L 8095:127.0.0.1:8095 BENUTZER@SERVER
 ```
 
 Fenster offen lassen, im Browser http://localhost:8095 öffnen.
+
+## Regionscheck (Ort/Zeit)
+
+Einmalig das PLZ-Verzeichnis laden (GeoNames, CC BY 4.0, ca. 30 MB Download, danach offline):
+
+```bash
+sudo -u belegcheck php /srv/belegcheck/app/artisan beleg:plz-import
+```
+
+In der Werkbank gilt ein Upload-Stapel als Belege einer Person. Liegen zwei Belege zeitlich zu nah für ihre
+Entfernung (z. B. Wien und München am selben Abend), werden beide gelb (Regel MU-OZ-01).

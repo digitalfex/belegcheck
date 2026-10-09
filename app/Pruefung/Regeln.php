@@ -49,6 +49,9 @@ final class Regeln
         'DE-KA-04' => 'Lokal mit bekannter TSE (neue TSE?)',
         'DE-KA-05' => 'TSE an derselben Kasse wie bisher',
 
+        // Schicht 3: Muster über mehrere Belege
+        'MU-OZ-01' => 'Orte und Zeiten der Belege einer Person sind vereinbar',
+
         // Schicht 4: Bildforensik (Metadaten)
         'BF-01' => 'Keine KI-Herkunftskennzeichnung in der Datei',
         'BF-02' => 'Kein Bildbearbeitungsprogramm in den Metadaten',

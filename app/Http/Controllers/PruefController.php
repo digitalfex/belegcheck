@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Fiskal\GedruckteWerte;
 use App\Fiskal\KassenGedaechtnis;
 use App\Forensik\ForensikPruefer;
+use App\Muster\OrtZeitPruefer;
 use App\Pruefung\BelegPruefService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -82,6 +83,26 @@ class PruefController extends Controller
         ]);
 
         return response()->json(['im_gedaechtnis' => $service->bestaetige($d['qr_text'], $d['uid'] ?? null, $d['aussteller'] ?? null, $d['datei_sha256'] ?? null)]);
+    }
+
+    /**
+     * Prüfungen über einen ganzen Upload-Stapel (in der Werkbank = Belege einer Person):
+     * MU-OZ-01 Orte und Zeiten vereinbar.
+     */
+    public function stapel(Request $request): JsonResponse
+    {
+        $d = $request->validate([
+            'belege' => ['required', 'array', 'max:500'],
+            'belege.*.id' => ['required'],
+            'belege.*.zeit' => ['required', 'string'],
+            'belege.*.lat' => ['required', 'numeric'],
+            'belege.*.lon' => ['required', 'numeric'],
+            'belege.*.ort' => ['required', 'string', 'max:100'],
+        ]);
+
+        $konflikte = (new OrtZeitPruefer)->pruefe(array_map(fn ($b) => [...$b, 'lat' => (float) $b['lat'], 'lon' => (float) $b['lon']], $d['belege']));
+
+        return response()->json(array_map(fn ($liste) => array_map(fn ($e) => $e->toArray(), $liste), $konflikte));
     }
 
     /** "92,60" / "92.60" / "1.092,60" → Cent */

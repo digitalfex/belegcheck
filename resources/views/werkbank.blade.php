@@ -83,6 +83,7 @@
   .begruendung { color: var(--muted); margin-top: 1px; }
   .stufe-widerspruch ~ div .begruendung, .stufe-auffaellig ~ div .begruendung { color: var(--ink); }
   .land { font-size: 10.5px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; margin-right: 6px; }
+  .ortzeit { color: var(--gelb); font-weight: 600; font-size: 12px; }
   .gemerkt { color: var(--gruen); font-size: 13px; align-self: center; }
   .meta { font-size: 12px; color: var(--muted); }
   @media (max-width: 900px) { .detailgitter { grid-template-columns: 1fr; } .original { position: static; } }
@@ -123,7 +124,7 @@
     </thead>
     <tbody id="liste"><tr><td colspan="9" class="leer">Noch keine Belege geprüft.</td></tr></tbody>
   </table>
-  <footer>Spaltenkopf anklicken zum Sortieren (Ampel: Rot zuerst). Zeile anklicken für Details mit dem Original (Bild anklicken vergrößert). Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
+  <footer>Ein Upload-Stapel gilt als Belege einer Person (Ort/Zeit-Prüfung). Spaltenkopf anklicken zum Sortieren (Ampel: Rot zuerst). Zeile anklicken für Details mit dem Original (Bild anklicken vergrößert). Dort kannst du die gedruckten Werte eintragen und den Beleg erneut gegen den QR-Code prüfen.</footer>
 </main>
 
 <div id="lupe" onclick="if (event.target === this) lupeZu()">
@@ -196,7 +197,7 @@ function weiter() {
     laufend++;
     b.status = 'prüft';
     zeichnen();
-    hochladen(b, datei).finally(() => { laufend--; zeichnen(); weiter(); });
+    hochladen(b, datei).finally(() => { laufend--; zeichnen(); weiter(); if (!laufend && !warteschlange.length) stapelPruefen(); });
   }
 }
 
@@ -213,6 +214,20 @@ async function hochladen(b, datei) {
     b.status = 'fehler';
     b.fehler = e.message;
   }
+}
+
+// Stapel = Belege einer Person: Orte und Zeiten vereinbar? (MU-OZ-01)
+async function stapelPruefen() {
+  const mitOrt = belege.filter(b => b.daten?.ort && (b.daten.qr?.datum_uhrzeit || b.daten.gedruckt?.datum_uhrzeit));
+  belege.forEach(b => b.stapel = []);
+  if (mitOrt.length < 2) { zeichnen(); return; }
+  const r = await fetch('/stapel', {
+    method: 'POST',
+    headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ belege: mitOrt.map(b => ({ id: b.id, zeit: (b.daten.qr?.datum_uhrzeit ?? b.daten.gedruckt.datum_uhrzeit).replace('T', ' '), lat: b.daten.ort.lat, lon: b.daten.ort.lon, ort: b.daten.ort.ort })) }),
+  });
+  if (r.ok) for (const [id, liste] of Object.entries(await r.json())) belege[id].stapel = liste;
+  zeichnen();
 }
 
 async function nachpruefen(b) {
@@ -249,6 +264,16 @@ function dubletten() {
   return hinweise;
 }
 
+// Risikowert inkl. Stapelprüfung (gleiche Punkte/Schwellen wie App\\Pruefung\\Risikobewertung)
+const PUNKTE = { ok: 0, nicht_pruefbar: 0, hinweis: 5, auffaellig: 15, widerspruch: 50 };
+function wirksam(b) {
+  const d = b.daten;
+  if (!d) return null;
+  const extra = (b.stapel ?? []).reduce((s, e) => s + PUNKTE[e.stufe], 0);
+  const wert = Math.min(100, d.risikowert + extra);
+  return { wert, ampel: wert >= 50 ? 'rot' : wert >= 15 ? 'gelb' : 'gruen' };
+}
+
 // ---------- Anzeige ----------
 let offen = null;
 
@@ -258,7 +283,7 @@ let sortSpalte = null, sortRichtung = 1;
 const AMPEL_RANG = b => b.status === 'fehler' ? 5 : !b.daten ? -2 : !b.daten.qr ? 0 : ({ gruen: 1, gelb: 2, rot: 3 }[b.daten.ampel] ?? 0);
 const SORT_WERT = {
   datei: b => b.name.toLowerCase(),
-  ampel: b => AMPEL_RANG(b) * 1000 + (b.daten?.risikowert ?? 0),
+  ampel: b => (b.daten?.qr ? { gruen: 1, gelb: 2, rot: 3 }[wirksam(b).ampel] : AMPEL_RANG(b)) * 1000 + (wirksam(b)?.wert ?? 0),
   aussteller: b => (b.daten?.aussteller ?? '').toLowerCase(),
   datum: b => b.daten?.qr?.datum_uhrzeit?.replace('T', ' ') ?? b.daten?.gedruckt?.datum_uhrzeit ?? '',
   kasse: b => b.daten?.qr?.kassen_id ?? '',
@@ -297,9 +322,9 @@ function zeichnen() {
 
   const fertig = belege.filter(b => b.daten);
   const zaehle = f => fertig.filter(f).length;
-  $('nGruen').textContent = zaehle(b => b.daten.qr && b.daten.ampel === 'gruen') + ' grün';
-  $('nGelb').textContent = zaehle(b => b.daten.qr && b.daten.ampel === 'gelb') + ' gelb';
-  $('nRot').textContent = zaehle(b => b.daten.qr && b.daten.ampel === 'rot') + ' rot';
+  $('nGruen').textContent = zaehle(b => b.daten.qr && wirksam(b).ampel === 'gruen') + ' grün';
+  $('nGelb').textContent = zaehle(b => b.daten.qr && wirksam(b).ampel === 'gelb') + ' gelb';
+  $('nRot').textContent = zaehle(b => b.daten.qr && wirksam(b).ampel === 'rot') + ' rot';
   $('nOhne').textContent = zaehle(b => !b.daten.qr) + ' ohne QR';
   const offenZahl = belege.filter(b => b.status === 'wartet' || b.status === 'prüft').length;
   $('fortschritt').textContent = offenZahl ? `prüfe … noch ${offenZahl}` : (belege.length ? `${belege.length} Belege` : '');
@@ -313,11 +338,12 @@ function zeile(b, dublette) {
   if (b.status === 'fehler') ampel = '<span class="ampel rot">Fehler</span>';
   else if (!d) ampel = `<span class="ampel grau">${b.status}</span>`;
   else if (!q) ampel = '<span class="ampel grau">ohne QR</span>';
-  else ampel = `<span class="ampel ${d.ampel}">${AMPEL_TEXT[d.ampel]} · ${d.risikowert}</span>`;
+  else { const w = wirksam(b); ampel = `<span class="ampel ${w.ampel}">${AMPEL_TEXT[w.ampel]} · ${w.wert}</span>`; }
 
   const auffaellig = d?.ergebnisse.filter(e => !['ok', 'nicht_pruefbar'].includes(e.stufe)) ?? [];
   const hinweis = b.status === 'fehler' ? `<span class="fehler">${esc(b.fehler)}</span>`
     : dublette ? `<span class="dublette">${esc(dublette)}</span>`
+    : b.stapel?.length ? `<span class="ortzeit">Ort/Zeit passt nicht zu ${b.stapel.length} anderem Beleg</span>`
     : esc(auffaellig.map(e => e.code).join(', '));
 
   return `<tr class="beleg" onclick="umschalten(${b.id})">
@@ -350,7 +376,7 @@ function bitAbstand(a, b) {
 function detail(b) {
   const d = b.daten;
   const RANG = { widerspruch: 0, auffaellig: 1, hinweis: 2, nicht_pruefbar: 3, ok: 4 };
-  const sortiert = [...d.ergebnisse].sort((a, b) => RANG[a.stufe] - RANG[b.stufe]);
+  const sortiert = [...(b.stapel ?? []), ...d.ergebnisse].sort((a, b) => RANG[a.stufe] - RANG[b.stufe]);
   const STUFE_TEXT = { ok: 'ok', hinweis: 'Hinweis', auffaellig: 'auffällig', widerspruch: 'Widerspruch', nicht_pruefbar: 'nicht prüfbar' };
   const ergebnisse = sortiert.map(e => `
     <div class="mono" title="${esc(e.code)}">${esc(e.code)}</div>
@@ -375,9 +401,10 @@ function detail(b) {
   const bilder = (d.vorschau || []).map((v, i) =>
     `<img src="data:image/jpeg;base64,${v}" alt="Seite ${i + 1}" onclick="event.stopPropagation(); lupe(this.src)" title="Klicken zum Vergrößern">`).join('');
   const f = d.forensik?.metadaten || {};
+  const ortZeile = d.ort ? `<div class="meta">Ort: ${esc(d.ort.plz)} ${esc(d.ort.ort)} (${esc(d.ort.land)})</div>` : '';
   const meta = d.forensik ? `<div class="meta">Datei: ${esc([f.hersteller, f.modell].filter(Boolean).join(' ') || 'keine Kameraangaben')}${f.software ? ' · Software: ' + esc(f.software) : ''}${f.aufnahme ? ' · Aufnahme: ' + esc(f.aufnahme) : ''}</div>` : '';
   return `<tr class="detail"><td colspan="9"><div class="detailgitter">
-    <div class="original">${bilder || '<div class="leer">keine Vorschau</div>'}${meta}</div>
+    <div class="original">${bilder || '<div class="leer">keine Vorschau</div>'}${ortZeile}${meta}</div>
     <div><div class="ergebnis">${ergebnisse}</div>${vergleich}${textBlock}</div>
   </div></td></tr>`;
 }

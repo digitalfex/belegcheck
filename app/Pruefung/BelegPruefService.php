@@ -15,6 +15,7 @@ use App\Fiskal\Rksv\RksvParser;
 use App\Fiskal\Rksv\RksvPruefer;
 use App\Forensik\ForensikPruefer;
 use App\Hashes\BelegFingerabdruck;
+use App\Muster\Ortsbestimmung;
 
 /**
  * Ein Beleg → Prüfbericht. Gemeinsam genutzt von Kommandozeile und Weboberfläche.
@@ -91,6 +92,7 @@ final class BelegPruefService
             'uid' => $uid,
             'land' => $kasse?->land ?? $text->land(),
             'aussteller' => $text->aussteller(),
+            'ort' => (new Ortsbestimmung)->bestimme(explode("\n", $text->text()), $kasse?->land ?? $text->land()),
             'gedruckt' => [
                 'gesamt_cent' => $gedruckt->gesamtCent,
                 'betraege_je_satz_cent' => $gedruckt->betraegeJeSatzCent,
